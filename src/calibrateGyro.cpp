@@ -1,5 +1,6 @@
 #include <Arduino.h>
 #include <math.h>
+#include <CodeCell.h>
 
 // ---- Settings ----
 static const uint32_t SAMPLE_PERIOD_MS = 100;   // 10 Hz
@@ -39,7 +40,7 @@ void computeMeanStd(const float* x, uint8_t n, float &mean, float &stdev) {
   stdev = sqrtf(var);
 }
 
-float getAndDoCalibration(&myCodeCell) {
+float getAndDoCalibration(CodeCell &myCodeCell) {
   static uint32_t startMs = millis();
   static uint32_t lastSampleMs = 0;
 
@@ -59,7 +60,7 @@ float getAndDoCalibration(&myCodeCell) {
   }
 
   // Sample at 10 Hz
-  if (now - lastSampleMs < SAMPLE_PERIOD_MS) return;
+  if (now - lastSampleMs < SAMPLE_PERIOD_MS) return recordedMean;
   lastSampleMs = now;
 
   float g = readGyroZ();
@@ -75,7 +76,7 @@ float getAndDoCalibration(&myCodeCell) {
     Serial.print(count);
     Serial.print("/");
     Serial.println(WINDOW_N);
-    return;
+    return recordedMean;
   }
 
   // Compute mean/stdev of the current window

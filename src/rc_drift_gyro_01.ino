@@ -3,6 +3,7 @@
 #include "DerivativeN.h"
 #include "SteeringMap.h"
 #include <CodeCell.h>
+#include "settings.h"
 
 #define WINDOW_SIZE 40
 
@@ -108,6 +109,8 @@ void setup() {
 
   Serial.print("Calibrated gz_offset = ");
   Serial.println(gz_offset);
+
+  makeSettings();
   
 }
 
