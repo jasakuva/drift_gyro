@@ -1,7 +1,9 @@
 #include <Arduino.h>
 #include <WiFi.h>
 #include <WebServer.h>
+#include <Preferences.h>
 
+Preferences prefs;
 
 WebServer server(80);
 
@@ -18,14 +20,14 @@ int epa_right_us  = 1900;
 int current_steering_us = 1500;
 
 // ---------- Settings variables (8 parameters) ----------
-int   p1 = 10;
-int   p2 = 20;
-int   p3 = 30;
-int   p4 = 40;
-float p5 = 0.5f;
-float p6 = 1.0f;
-float p7 = 2.5f;
-int   p8 = 1;
+int   p1;
+int   p2;
+int   p3;
+int   p4;
+float p5;
+float p6;
+float p7;
+int   p8;
 
 // ---------- Helpers ----------
 static String htmlHeader(const String& title) {
@@ -55,6 +57,50 @@ static int getArgInt(const char* name, int fallback) {
 }
 static float getArgFloat(const char* name, float fallback) {
   return server.hasArg(name) ? server.arg(name).toFloat() : fallback;
+}
+
+void loadSettings() {
+  prefs.begin("rc", true);  // read-only
+  epa_left_us   = prefs.getInt("epaL", 1100);
+  epa_center_us = prefs.getInt("epaC", 1500);
+  epa_right_us  = prefs.getInt("epaR", 1900);
+
+  p1 = prefs.getInt("p1", 10);
+  p2 = prefs.getInt("p2", 20);
+  p3 = prefs.getInt("p3", 30);
+  p4 = prefs.getInt("p4", 40);
+  p5 = prefs.getFloat("p5", 0.5f);
+  p6 = prefs.getFloat("p6", 1.0f);
+  p7 = prefs.getFloat("p7", 2.5f);
+  p8 = prefs.getInt("p8", 1);
+  prefs.end();
+
+  Serial.println("Settings loaded from NVS (or defaults)");
+}
+
+
+
+void saveEpa() {
+  prefs.begin("rc", false);  // not read-only
+  prefs.putInt("epaL", epa_left_us);
+  prefs.putInt("epaC", epa_center_us);
+  prefs.putInt("epaR", epa_right_us);
+  prefs.end();
+
+}
+
+void saveParameters() {
+  prefs.begin("rc", false);  // not read-only
+  prefs.putInt("p1", p1);
+  prefs.putInt("p2", p2);
+  prefs.putInt("p3", p3);
+  prefs.putInt("p4", p4);
+  prefs.putFloat("p5", p5);
+  prefs.putFloat("p6", p6);
+  prefs.putFloat("p7", p7);
+  prefs.putInt("p8", p8);
+  prefs.end();
+
 }
 
 // ---------- Pages ----------
@@ -104,7 +150,9 @@ void handleEPAAction() {
   if (cmd == "left")   { epa_left_us = measured;   msg = "Recorded LEFT = "   + String(epa_left_us) + " us"; }
   if (cmd == "center") { epa_center_us = measured; msg = "Recorded CENTER = " + String(epa_center_us) + " us"; }
   if (cmd == "right")  { epa_right_us = measured;  msg = "Recorded RIGHT = "  + String(epa_right_us) + " us"; }
-  if (cmd == "save")   { msg = "Saved (RAM only). Add Preferences to persist."; }
+  if (cmd == "save")   { 
+    saveEpa(); 
+    msg = "EPA values saved to persistend memory"; }
 
   server.sendHeader("Location", "/epa?msg=" + msg);
   server.send(303);
@@ -118,16 +166,34 @@ void handleSettings() {
 
   if (msg.length()) s += "<p><b>Status:</b> " + msg + "</p>";
 
+  s += "<style>"
+       ".formgrid{display:grid;grid-template-columns:140px auto;gap:10px 12px;align-items:center;}"
+       ".formgrid label{margin:0;font-weight:600;}"
+       ".val8{width:8ch;}"                 // ~8 digits wide
+       "input[type=number]{padding:8px;font-size:16px;}"
+       "</style>";
+
   s += "<form method='POST' action='/settings/set'>";
-  s += "<label>p1 (int)</label><input name='p1' type='number' value='" + String(p1) + "'>";
-  s += "<label>p2 (int)</label><input name='p2' type='number' value='" + String(p2) + "'>";
-  s += "<label>p3 (int)</label><input name='p3' type='number' value='" + String(p3) + "'>";
-  s += "<label>p4 (int)</label><input name='p4' type='number' value='" + String(p4) + "'>";
-  s += "<label>p5 (float)</label><input name='p5' type='number' step='any' value='" + String(p5, 6) + "'>";
-  s += "<label>p6 (float)</label><input name='p6' type='number' step='any' value='" + String(p6, 6) + "'>";
-  s += "<label>p7 (float)</label><input name='p7' type='number' step='any' value='" + String(p7, 6) + "'>";
-  s += "<label>p8 (int)</label><input name='p8' type='number' value='" + String(p8) + "'>";
-  s += "<div style='margin-top:14px'><button type='submit'>Set</button></div>";
+  s += "<div class='formgrid'>";
+
+  s += "<label for='p1'>Correction Power (0-100)</label><input class='val8' id='p1' name='p1' type='number' value='" + String(p1) + "'>";
+  s += "<label for='p2'>Correction Derivative (0-100)</label><input class='val8' id='p2' name='p2' type='number' value='" + String(p2) + "'>";
+  s += "<label for='p3'>Driver prio, base (0-10)</label><input class='val8' id='p3' name='p3' type='number' value='" + String(p3) + "'>";
+  s += "<label for='p4'>Driver prio, derivative (0-10)</label><input class='val8' id='p4' name='p4' type='number' value='" + String(p4) + "'>";
+
+  // floats: keep step any + show with 6 decimals like before
+  s += "<label for='p5'>Gyro filter (0-1)</label><input class='val8' id='p5' name='p5' type='number' step='any' value='" + String(p5, 6) + "'>";
+  s += "<label for='p6'>Steering filter (0-1)</label><input class='val8' id='p6' name='p6' type='number' step='any' value='" + String(p6, 6) + "'>";
+  s += "<label for='p7'>Drift detection (0-1)</label><input class='val8' id='p7' name='p7' type='number' step='any' value='" + String(p7, 6) + "'>";
+
+  s += "<label for='p8'>Steering marginal (0-1)</label><input class='val8' id='p8' name='p8' type='number' value='" + String(p8) + "'>";
+
+  s += "</div>"; // formgrid
+
+  s += "<div style='margin-top:14px'>"
+       "<button type='submit'>Set</button>"
+       "</div>";
+
   s += "</form>";
 
   s += "<a href='/'>Back</a>";
@@ -147,8 +213,11 @@ void handleSettingsSet() {
   p7 = getArgFloat("p7", p7);
   p8 = getArgInt("p8", p8);
 
+  saveParameters();
+
   server.sendHeader("Location", "/settings?msg=Updated");
   server.send(303);
+  
 }
 
 void handleNotFound() {
@@ -156,8 +225,8 @@ void handleNotFound() {
 }
 
 void setupSettings() {
- 
-
+  loadSettings();             // read saved values (or defaults)
+  
   // --- Start AP ---
   WiFi.mode(WIFI_AP);
   bool ok = WiFi.softAP(AP_SSID, AP_PASS);
