@@ -5,11 +5,15 @@
 #include <CodeCell.h>
 #include "settings.h"
 
+portMUX_TYPE s_mux = portMUX_INITIALIZER_UNLOCKED;
+
 #define WINDOW_SIZE 40
 
 float Roll;
 float Pitch;
 float Yaw;
+volatile float yawRate_dps;
+
 CodeCell myCodeCell;
 
 Servo steerServo;
@@ -20,9 +24,9 @@ DerivativeN dSteering(20);
 float gz_offset;
 
 // ---- Pins ----
-const uint8_t PIN_STEER_IN = 2;   // INT0
+const uint8_t PIN_STEER_IN = 1;   // INT0
 const uint8_t PIN_GAIN_IN  = 3;   // INT1 (optional)
-const uint8_t PIN_SERVO_OUT = 9;
+const uint8_t PIN_SERVO_OUT = 2;
 
 // ---- RC ranges ----
 const int16_t RC_MIN = 1000;
@@ -42,11 +46,18 @@ int count_gyro = 0;
 
 
 
-void isrSteer() {
-  if (digitalRead(PIN_STEER_IN)) s_rise = micros();
-  else {
+void IRAM_ATTR isrSteer() {
+  if (digitalRead(PIN_STEER_IN)) {
+    portENTER_CRITICAL_ISR(&s_mux);
+    s_rise = micros();
+    portEXIT_CRITICAL_ISR(&s_mux);
+  } else {
     uint32_t w = micros() - s_rise;
-    if (w >= 800 && w <= 2200) s_pw = (uint16_t)w;
+    if (w >= 800 && w <= 2200) {
+      portENTER_CRITICAL_ISR(&s_mux);
+      s_pw = (uint16_t)w;
+      portEXIT_CRITICAL_ISR(&s_mux);
+    }
   }
 }
 
@@ -139,8 +150,8 @@ void loop() {
   // Read RC pulses atomically
   uint16_t steerIn, gainIn;
   noInterrupts();
-  //steerIn = s_pw;
-  steerIn = 1500;
+  steerIn = s_pw;
+  //steerIn = 1500;
   gainIn  = g_pw;
   interrupts();
 
@@ -157,7 +168,7 @@ void loop() {
 
   float Result_gyro = moving_average_gyro(Yaw * 115.0f);
 
-  float yawRate_dps = Result_gyro;
+  yawRate_dps = Result_gyro;
 
   // Low-pass filter yaw rate to reduce twitch
   static float yawRateFilt = 0.0f;
@@ -199,6 +210,7 @@ void loop() {
     Serial.print("normSteering="); Serial.print(normSteering);
     Serial.print(" yaw(dps)="); Serial.print(yawRateFilt);
     Serial.print(" gain="); Serial.print(gain);
+    Serial.print(" steerIn="); Serial.print(steerIn);
     Serial.print(" out="); Serial.println(out);
   }
 }
