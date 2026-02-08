@@ -13,6 +13,7 @@ public:
   }
 
   void SetGyroReserve(int16_t gyro_reserve) {
+    
     p_gyro_reserve = gyro_reserve;
   }
 
@@ -26,9 +27,11 @@ public:
 
   int16_t getServoMsValue(float normalized) {
     if (normalized >= 0.0f) {
-      return p_epa_center + normalized * (p_steering_epa_high - p_epa_center);
+      //return p_epa_center + normalized * (p_steering_epa_high - p_epa_center);
+      return p_epa_center + normalized * (p_epa_high - p_epa_center);
     } else {
-      return p_epa_center - normalized * (p_epa_center - p_steering_epa_low);
+      //return p_epa_center - normalized * (p_epa_center - p_steering_epa_low);
+      return p_epa_center + normalized * (p_epa_center - p_epa_low);
     }
   }
 

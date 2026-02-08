@@ -4,6 +4,7 @@
 #include <WebServer.h>
 #include <Preferences.h>
 #include <WebSocketsServer.h>
+#include <ESP32Servo.h>
 
 // -----------------------
 // Externs from main.ino
@@ -14,19 +15,20 @@
 extern volatile uint16_t s_pw;
 extern float yawRate_dps;
 extern portMUX_TYPE s_mux;
+extern Servo steerServo;
 
 Preferences prefs;
 WebServer server(80);
 WebSocketsServer ws(81);   // WebSocket on port 81
 
 // ---------- AP credentials ----------
-const char* AP_SSID = "ESP32-EPA";
+const char* AP_SSID = "JASAGYRO-A1";
 const char* AP_PASS = "12345678";
 
 // ---------- Example EPA variables ----------
-int epa_left_us   = 1100;
+int epa_low_us   = 1100;
 int epa_center_us = 1500;
-int epa_right_us  = 1900;
+int epa_high_us  = 1900;
 
 // Replace with your real measurement source (we’ll set it from s_pw snapshot)
 int current_steering_us = 1500;
@@ -90,6 +92,7 @@ static void onWsEvent(uint8_t num, WStype_t type, uint8_t * payload, size_t leng
       IPAddress ip = ws.remoteIP(num);
       Serial.printf("[WS] Client #%u connected from %s\n", num, ip.toString().c_str());
       String msg = "{\"steer\":" + String(getSteerPwSnapshot()) + "}";
+      
       ws.sendTXT(num, msg);
     } break;
 
@@ -109,9 +112,9 @@ static void onWsEvent(uint8_t num, WStype_t type, uint8_t * payload, size_t leng
 // ---------- NVS load/save ----------
 static void loadSettings() {
   prefs.begin("rc", true);
-  epa_left_us   = prefs.getInt("epaL", 1100);
+  epa_low_us   = prefs.getInt("epaL", 1100);
   epa_center_us = prefs.getInt("epaC", 1500);
-  epa_right_us  = prefs.getInt("epaR", 1900);
+  epa_high_us  = prefs.getInt("epaH", 1900);
 
   p1 = prefs.getInt("p1", 10);
   p2 = prefs.getInt("p2", 20);
@@ -128,9 +131,9 @@ static void loadSettings() {
 
 static void saveEpa() {
   prefs.begin("rc", false);
-  prefs.putInt("epaL", epa_left_us);
+  prefs.putInt("epaL", epa_low_us);
   prefs.putInt("epaC", epa_center_us);
-  prefs.putInt("epaR", epa_right_us);
+  prefs.putInt("epaH", epa_high_us);
   prefs.end();
 }
 
@@ -167,9 +170,9 @@ static void handleEPA() {
   String s = htmlHeader("EPA");
   s += "<div class='card'>";
   s += "<div class='row'>";
-  s += "<form method='POST' action='/epa/action'><button name='cmd' value='left'>Left</button></form>";
+  s += "<form method='POST' action='/epa/action'><button name='cmd' value='low'>Low</button></form>";
   s += "<form method='POST' action='/epa/action'><button name='cmd' value='center'>Center</button></form>";
-  s += "<form method='POST' action='/epa/action'><button name='cmd' value='right'>Right</button></form>";
+  s += "<form method='POST' action='/epa/action'><button name='cmd' value='high'>High</button></form>";
   s += "<form method='POST' action='/epa/action'><button name='cmd' value='save'>Save</button></form>";
   s += "</div>";
 
@@ -178,9 +181,9 @@ static void handleEPA() {
   // Live value from websocket
   s += "<p><b>Current steering:</b> <span id='steer'>--</span> us</p>";
 
-  s += "<p><b>EPA Left:</b> " + String(epa_left_us) + " us<br>";
+  s += "<p><b>EPA low:</b> " + String(epa_low_us) + " us<br>";
   s += "<b>EPA Center:</b> " + String(epa_center_us) + " us<br>";
-  s += "<b>EPA Right:</b> " + String(epa_right_us) + " us</p>";
+  s += "<b>EPA high:</b> " + String(epa_high_us) + " us</p>";
 
   s += "<a href='/'>Back</a>";
   s += "</div>";
@@ -213,9 +216,9 @@ static void handleEPAAction() {
   current_steering_us = measured;
 
   String msg = "Unknown command";
-  if (cmd == "left")   { epa_left_us = s_pw;   msg = "Recorded LEFT = "   + String(epa_left_us) + " us"; }
+  if (cmd == "low")   { epa_low_us = s_pw;   msg = "Recorded LOW = "   + String(epa_low_us) + " us"; }
   if (cmd == "center") { epa_center_us = s_pw; msg = "Recorded CENTER = " + String(epa_center_us) + " us"; }
-  if (cmd == "right")  { epa_right_us = s_pw;  msg = "Recorded RIGHT = "  + String(epa_right_us) + " us"; }
+  if (cmd == "high")  { epa_high_us = s_pw;  msg = "Recorded HIGH = "  + String(epa_high_us) + " us"; }
   if (cmd == "save")   { saveEpa(); msg = "EPA values saved to persistent memory"; }
 
   server.sendHeader("Location", "/epa?msg=" + msg);
@@ -336,6 +339,7 @@ void makeSettings() {
       lastPush = millis();
       String msg = "{\"steer\":" + String(getSteerPwSnapshot()) + "}";
       ws.broadcastTXT(msg);
+      steerServo.writeMicroseconds(getSteerPwSnapshot());
     }
 
     delay(1);

@@ -26,5 +26,5 @@ extern int   p8;
 void setupSettings();
 void makeSettings();
 
-void loadSettings();   // read from NVS into p1..p8
+//void loadSettings();   // read from NVS into p1..p8
 //void saveSettings();   // write p1..p8 into NVS
