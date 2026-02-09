@@ -9,7 +9,7 @@
 
 portMUX_TYPE s_mux = portMUX_INITIALIZER_UNLOCKED;
 
-#define WINDOW_SIZE 5
+#define BUFFER_SIZE 30
 
 float Roll;
 float Pitch;
@@ -53,6 +53,9 @@ int epa_high_us_2  = 1900;
 //float p6;
 //float p7;
 //int   p8;
+
+float gain_main_2;
+int gyro_avg_2;
 
 SteeringMap mySteeringMap(1000,2000,1500);
 
@@ -106,6 +109,9 @@ static void loadSettings_2() {
   epa_low_us_2   = prefs_2.getInt("epaL", 1100);
   epa_center_us_2 = prefs_2.getInt("epaC", 1500);
   epa_high_us_2  = prefs_2.getInt("epaH", 1900);
+  
+  gain_main_2 = prefs_2.getFloat("gain_main", 1.0);
+  gyro_avg_2  = prefs_2.getInt("gyro_avg", 6);
 
   //p1 = prefs_2.getInt("p1", 10);
   //p2 = prefs_2.getInt("p2", 20);
@@ -161,25 +167,25 @@ void setup() {
   
 }
 
-float moving_average_gyro(float new_value)
+float moving_average_gyro(float new_value, int avg_size)
 {
-    // Remove the oldest value from sum
-    sum_gyro -= buffer_gyro[bufIndex_gyro];
-
-    // Store new value
     buffer_gyro[bufIndex_gyro] = new_value;
-    sum_gyro += new_value;
 
-    // Move index circularly
-    bufIndex_gyro = (bufIndex_gyro + 1) % WINDOW_SIZE;
+    bufIndex_gyro = (bufIndex_gyro + 1) % BUFFER_SIZE;
 
-    // Count samples (for startup phase)
-    if (count_gyro < WINDOW_SIZE) {
+    if (count_gyro < BUFFER_SIZE) {
         count_gyro++;
     }
 
-    // Return average
-    return sum_gyro / count_gyro;   // use WINDOW_SIZE once fully filled
+    float sum = 0.0f;
+    int samples = (count_gyro < avg_size) ? count_gyro : avg_size;
+
+    for (int i = 0; i < samples; i++) {
+        int idx = (bufIndex_gyro - 1 - i + BUFFER_SIZE) % BUFFER_SIZE;
+        sum += buffer_gyro[idx];
+    }
+
+    return sum / samples;
 }
 
 void loop() {
@@ -202,7 +208,7 @@ void loop() {
     myCodeCell.Motion_GyroRead(Roll, Pitch, Yaw); 
   }
 
-  float Result_gyro = moving_average_gyro(Yaw * 115.0f);
+  float Result_gyro = moving_average_gyro(Yaw * 115.0f, gyro_avg_2);
 
   yawRate_dps = Result_gyro;
 
@@ -216,7 +222,7 @@ void loop() {
   float gain = ((float)gainIn - 1000.0f) / 1000.0f;  // 0..1
   gain = clamp16((int16_t)(gain * 1000), 0, 1000) / 1000.0f;
   
-  float gyro_correction = (yawRateFilt / 180.0f)*(gain/3) + (dYawRate.get() / 50.0f)*(gain);
+  float gyro_correction = gain_main_2*((yawRateFilt / 180.0f)*(gain/3) + (dYawRate.get() / 50.0f)*(gain));
   
   float corr = gyro_correction / (1.0f + abs(dSteering.get())/2.0f);
  

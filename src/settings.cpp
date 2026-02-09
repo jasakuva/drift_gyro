@@ -30,6 +30,9 @@ int epa_low_us   = 1100;
 int epa_center_us = 1500;
 int epa_high_us  = 1900;
 
+float gain_main = 1;
+int gyro_avg = 6;
+
 // Replace with your real measurement source (we’ll set it from s_pw snapshot)
 int current_steering_us = 1500;
 
@@ -42,6 +45,7 @@ float p5;
 float p6;
 float p7;
 int   p8;
+
 
 int exitSettings = 0;
 
@@ -115,6 +119,9 @@ static void loadSettings() {
   epa_low_us   = prefs.getInt("epaL", 1100);
   epa_center_us = prefs.getInt("epaC", 1500);
   epa_high_us  = prefs.getInt("epaH", 1900);
+  
+  gain_main = prefs.getFloat("gain_main", 1);
+  gyro_avg = prefs.getInt("gyro_avg", 6);
 
   p1 = prefs.getInt("p1", 10);
   p2 = prefs.getInt("p2", 20);
@@ -138,7 +145,10 @@ static void saveEpa() {
 }
 
 static void saveParameters() {
+
   prefs.begin("rc", false);
+  prefs.putFloat("gain_main", gain_main);
+  prefs.putInt("gyro_avg", gyro_avg);
   prefs.putInt("p1", p1);
   prefs.putInt("p2", p2);
   prefs.putInt("p3", p3);
@@ -243,8 +253,8 @@ static void handleSettings() {
   s += "<form method='POST' action='/settings/set'>";
   s += "<div class='formgrid'>";
 
-  s += "<label for='p1'>Correction Power (0-100)</label><input class='val8' id='p1' name='p1' type='number' value='" + String(p1) + "'>";
-  s += "<label for='p2'>Correction Derivative (0-100)</label><input class='val8' id='p2' name='p2' type='number' value='" + String(p2) + "'>";
+  s += "<label for='gain_main'>gain_main</label><input class='val8' id='gain_main' name='gain_main' type='number' value='" + String(gain_main) + "'>";
+  s += "<label for='p2'>gyro_avg</label><input class='val8' id='gyro_avg' name='gyro_avg' type='number' value='" + String(gyro_avg) + "'>";
   s += "<label for='p3'>Driver prio, base (0-10)</label><input class='val8' id='p3' name='p3' type='number' value='" + String(p3) + "'>";
   s += "<label for='p4'>Driver prio, derivative (0-10)</label><input class='val8' id='p4' name='p4' type='number' value='" + String(p4) + "'>";
 
@@ -267,7 +277,8 @@ static void handleSettings() {
 }
 
 static void handleSettingsSet() {
-  p1 = getArgInt("p1", p1);
+  p1 = getArgFloat("gain_main", gain_main);
+  p1 = getArgInt("gyro_avg", gyro_avg);
   p2 = getArgInt("p2", p2);
   p3 = getArgInt("p3", p3);
   p4 = getArgInt("p4", p4);
