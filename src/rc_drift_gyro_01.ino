@@ -56,6 +56,8 @@ int epa_high_us_2  = 1900;
 
 float gain_main_2;
 int gyro_avg_2;
+int deriv_yaw_window_2;
+int deriv_steer_window_2;
 
 SteeringMap mySteeringMap(1000,2000,1500);
 
@@ -63,7 +65,7 @@ SteeringMap mySteeringMap(1000,2000,1500);
 volatile uint32_t s_rise = 0, g_rise = 0;
 volatile uint16_t s_pw = RC_MID, g_pw = RC_MID;
 
-float buffer_gyro[WINDOW_SIZE] = {0};
+float buffer_gyro[BUFFER_SIZE] = {0};
 float sum_gyro = 0.0f;
 int bufIndex_gyro = 0;
 int count_gyro = 0;
@@ -112,6 +114,8 @@ static void loadSettings_2() {
   
   gain_main_2 = prefs_2.getFloat("gain_main", 1.0);
   gyro_avg_2  = prefs_2.getInt("gyro_avg", 6);
+  deriv_yaw_window_2 = prefs_2.getInt("deriv_yaw_window", 15);
+  deriv_steer_window_2 = prefs_2.getInt("deriv_steer_window", 5);
 
   //p1 = prefs_2.getInt("p1", 10);
   //p2 = prefs_2.getInt("p2", 20);
@@ -132,21 +136,21 @@ void setup() {
   myCodeCell.Init(MOTION_GYRO);
   pinMode(PIN_STEER_IN, INPUT);
   pinMode(PIN_GAIN_IN, INPUT);
-  delay(1000);
+  delay(500);
 
   steerServo.attach(PIN_SERVO_OUT);
   
   steerServo.setTimerWidth(14);
   
-  for (int us = 1700; us >= 1100; us -= 1) {
+  for (int us = 1700; us >= 1300; us -= 1) {
     steerServo.writeMicroseconds(us);
-    delay(20);
+    delay(5);
   }
 
   attachInterrupt(digitalPinToInterrupt(PIN_STEER_IN), isrSteer, CHANGE);
   attachInterrupt(digitalPinToInterrupt(PIN_GAIN_IN),  isrGain,  CHANGE);
 
-  delay(2000);
+  delay(1000);
 
   //for (int i = 0; i < 10000; i++) {
   //  steerServo.writeMicroseconds(s_pw);
@@ -159,6 +163,10 @@ void setup() {
   };
 
   loadSettings_2();
+
+  dYawRate.setWindow(deriv_yaw_window_2);
+  dSteering.setWindow(deriv_steer_window_2);
+
   //if (calibrateYawAvg(myCodeCell, gz_offset)) {
   //gz_offset = gz_offset;   // store calibration
   //} else {
@@ -267,7 +275,7 @@ void loop() {
     cc.Motion_GyroRead(roll, pitch, yaw);
 
     buf[idx] = yaw;
-    idx = (idx + 1) % WINDOW_SIZE;
+    idx = (idx + 1) % WINDOW_SIZE_2;
     if (filled < WINDOW_SIZE_2) filled++;
 
     if (filled == WINDOW_SIZE_2) {

@@ -32,6 +32,8 @@ int epa_high_us  = 1900;
 
 float gain_main = 1;
 int gyro_avg = 6;
+int deriv_yaw_window = 15;
+int deriv_steer_window = 5;
 
 // Replace with your real measurement source (we’ll set it from s_pw snapshot)
 int current_steering_us = 1500;
@@ -122,6 +124,8 @@ static void loadSettings() {
   
   gain_main = prefs.getFloat("gain_main", 1);
   gyro_avg = prefs.getInt("gyro_avg", 6);
+  deriv_yaw_window = prefs.getInt("deriv_yaw_window", 15);
+  deriv_steer_window = prefs.getInt("deriv_steer_window", 15);
 
   p1 = prefs.getInt("p1", 10);
   p2 = prefs.getInt("p2", 20);
@@ -149,6 +153,8 @@ static void saveParameters() {
   prefs.begin("rc", false);
   prefs.putFloat("gain_main", gain_main);
   prefs.putInt("gyro_avg", gyro_avg);
+  prefs.putInt("deriv_yaw_window", deriv_yaw_window);
+  prefs.putInt("deriv_steer_window", deriv_steer_window);
   prefs.putInt("p1", p1);
   prefs.putInt("p2", p2);
   prefs.putInt("p3", p3);
@@ -253,10 +259,10 @@ static void handleSettings() {
   s += "<form method='POST' action='/settings/set'>";
   s += "<div class='formgrid'>";
 
-  s += "<label for='gain_main'>gain_main</label><input class='val8' id='gain_main' name='gain_main' type='number' value='" + String(gain_main) + "'>";
-  s += "<label for='p2'>gyro_avg</label><input class='val8' id='gyro_avg' name='gyro_avg' type='number' value='" + String(gyro_avg) + "'>";
-  s += "<label for='p3'>Driver prio, base (0-10)</label><input class='val8' id='p3' name='p3' type='number' value='" + String(p3) + "'>";
-  s += "<label for='p4'>Driver prio, derivative (0-10)</label><input class='val8' id='p4' name='p4' type='number' value='" + String(p4) + "'>";
+  s += "<label for='gain_main'>gain_main</label><input class='val8' id='gain_main' name='gain_main' type='number' step='any' value='" + String(gain_main) + "'>";
+  s += "<label for='gyro_avg'>gyro_avg</label><input class='val8' id='gyro_avg' name='gyro_avg' type='number' value='" + String(gyro_avg) + "'>";
+  s += "<label for='deriv_yaw_window'>deriv_yaw_window</label><input class='val8' id='deriv_yaw_window' name='deriv_yaw_window' type='number' value='" + String(deriv_yaw_window) + "'>";
+  s += "<label for='deriv_steer_window'>deriv_steer_window</label><input class='val8' id='deriv_steer_window' name='deriv_steer_window' type='number' value='" + String(deriv_steer_window) + "'>";
 
   s += "<label for='p5'>Gyro filter (0-1)</label><input class='val8' id='p5' name='p5' type='number' step='any' value='" + String(p5, 6) + "'>";
   s += "<label for='p6'>Steering filter (0-1)</label><input class='val8' id='p6' name='p6' type='number' step='any' value='" + String(p6, 6) + "'>";
@@ -277,10 +283,10 @@ static void handleSettings() {
 }
 
 static void handleSettingsSet() {
-  p1 = getArgFloat("gain_main", gain_main);
-  p1 = getArgInt("gyro_avg", gyro_avg);
-  p2 = getArgInt("p2", p2);
-  p3 = getArgInt("p3", p3);
+  gain_main = getArgFloat("gain_main", gain_main);
+  gyro_avg = getArgInt("gyro_avg", gyro_avg);
+  deriv_yaw_window = getArgInt("deriv_yaw_window", deriv_yaw_window);
+  deriv_steer_window = getArgInt("deriv_steer_window", deriv_steer_window);
   p4 = getArgInt("p4", p4);
   p5 = getArgFloat("p5", p5);
   p6 = getArgFloat("p6", p6);
