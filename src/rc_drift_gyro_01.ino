@@ -58,6 +58,12 @@ float gain_main_2;
 int gyro_avg_2;
 int deriv_yaw_window_2;
 int deriv_steer_window_2;
+float steer_prio_2;
+float gyro_dp_2;
+int debug_serial_2=0;
+
+int to_settings_counter;
+
 
 SteeringMap mySteeringMap(1000,2000,1500);
 
@@ -111,20 +117,18 @@ static void loadSettings_2() {
   epa_low_us_2   = prefs_2.getInt("epaL", 1100);
   epa_center_us_2 = prefs_2.getInt("epaC", 1500);
   epa_high_us_2  = prefs_2.getInt("epaH", 1900);
-  
+
   gain_main_2 = prefs_2.getFloat("gain_main", 1.0);
   gyro_avg_2  = prefs_2.getInt("gyro_avg", 6);
-  deriv_yaw_window_2 = prefs_2.getInt("deriv_yaw_window", 15);
-  deriv_steer_window_2 = prefs_2.getInt("deriv_steer_window", 5);
+  deriv_yaw_window_2 = prefs_2.getInt("d_y_a", 15);
+  deriv_steer_window_2 = prefs_2.getInt("d_y_s", 5);
+  steer_prio_2 = prefs_2.getFloat("steer_prio", 1);
+  gyro_dp_2 = prefs_2.getFloat("gyro_dp", 0.5);
+  
 
-  //p1 = prefs_2.getInt("p1", 10);
-  //p2 = prefs_2.getInt("p2", 20);
-  //p3 = prefs_2.getInt("p3", 30);
-  //p4 = prefs_2.getInt("p4", 40);
-  //p5 = prefs_2.getFloat("p5", 0.5f);
-  //p6 = prefs_2.getFloat("p6", 1.0f);
-  //p7 = prefs_2.getFloat("p7", 2.5f);
-  //p8 = prefs_2.getInt("p8", 1);
+  Serial.print("gyro_avg_2="); Serial.print(gyro_avg_2);
+  Serial.print("deriv_yaw_window_2="); Serial.print(deriv_yaw_window_2);
+
   prefs_2.end();
 }
 
@@ -142,7 +146,7 @@ void setup() {
   
   steerServo.setTimerWidth(14);
   
-  for (int us = 1700; us >= 1300; us -= 1) {
+  for (int us = 1600; us >= 1400; us -= 1) {
     steerServo.writeMicroseconds(us);
     delay(5);
   }
@@ -157,12 +161,16 @@ void setup() {
   //  delay(5);
   //}
 
-  if (s_pw < 1300 || s_pw > 1500)
+  //makeSettings();
+
+  if (s_pw < 1300 || s_pw > 1700)
   {
     makeSettings();
   };
 
   loadSettings_2();
+
+  delay(5000);
 
   dYawRate.setWindow(deriv_yaw_window_2);
   dSteering.setWindow(deriv_steer_window_2);
@@ -205,24 +213,35 @@ void loop() {
   gainIn  = g_pw;
   //interrupts();
 
+  
+
   // Convert steer to signed
   int16_t steer = (int16_t)steerIn - RC_MID; // -500..+500
 
   float normSteering = mySteeringMap.getNormalized(steerIn);
 
   // Read gyro
+  myCodeCell.Motion_GyroRead(Roll, Pitch, Yaw); 
   
-  if (myCodeCell.Run(100)) {
-    myCodeCell.Motion_GyroRead(Roll, Pitch, Yaw); 
-  }
-
   float Result_gyro = moving_average_gyro(Yaw * 115.0f, gyro_avg_2);
+
+  // go to settings mode if steerin near epa and no yaw rate
+  if ((steerIn < epa_low_us_2+10 || steerIn > epa_high_us_2-10) && abs(Result_gyro) < 2) {
+    to_settings_counter++;
+    if (to_settings_counter > 400) {
+      makeSettings();
+      to_settings_counter = 0;
+    }
+  } else {
+    to_settings_counter = 0;
+  }
 
   yawRate_dps = Result_gyro;
 
   // Low-pass filter yaw rate to reduce twitch
   static float yawRateFilt = 0.0f;
-  yawRateFilt = lpf(yawRateFilt, yawRate_dps, 0.2f); // alpha 0.1..0.3 typical
+  // yawRateFilt = lpf(yawRateFilt, yawRate_dps, 0.2f); // alpha 0.1..0.3 typical
+  yawRateFilt = yawRate_dps;
 
   dYawRate.add(yawRateFilt);
   dSteering.add(normSteering);
@@ -230,12 +249,12 @@ void loop() {
   float gain = ((float)gainIn - 1000.0f) / 1000.0f;  // 0..1
   gain = clamp16((int16_t)(gain * 1000), 0, 1000) / 1000.0f;
   
-  float gyro_correction = gain_main_2*((yawRateFilt / 180.0f)*(gain/3) + (dYawRate.get() / 50.0f)*(gain));
+  float gyro_correction = gain_main_2*(gyro_dp_2*(yawRateFilt / 180.0f)*(gain/3) + (1-gyro_dp_2)*(dYawRate.get() / 50.0f)*(gain));
   
-  float corr = gyro_correction / (1.0f + abs(dSteering.get())/2.0f);
- 
+  float corr = gyro_correction / (1.0f + (abs(dSteering.get())/2.0f)*steer_prio_2);
+
   int16_t out = (int16_t)mySteeringMap.getServoMsValue(normSteering + corr);
-  out = clamp16(out, RC_MIN, RC_MAX);
+  out = clamp16(out, epa_low_us_2, epa_high_us_2);
 
   steerServo.writeMicroseconds(out);
 
@@ -244,7 +263,7 @@ void loop() {
 
   // Debug
   static uint32_t lastPrint = 0;
-  if (millis() - lastPrint > 200) {
+  if (millis() - lastPrint > 200 && debug_serial_2 == 1) {
     lastPrint = millis();
     Serial.print("corr="); Serial.print(corr);
     Serial.print("Result_gyro="); Serial.print(Result_gyro);

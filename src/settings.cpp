@@ -34,19 +34,14 @@ float gain_main = 1;
 int gyro_avg = 6;
 int deriv_yaw_window = 15;
 int deriv_steer_window = 5;
+float steer_prio = 1;
+float gyro_dp = 0.5;
 
 // Replace with your real measurement source (we’ll set it from s_pw snapshot)
 int current_steering_us = 1500;
 
 // ---------- Settings variables (8 parameters) ----------
-int   p1;
-int   p2;
-int   p3;
-int   p4;
-float p5;
-float p6;
-float p7;
-int   p8;
+
 
 
 int exitSettings = 0;
@@ -124,17 +119,12 @@ static void loadSettings() {
   
   gain_main = prefs.getFloat("gain_main", 1);
   gyro_avg = prefs.getInt("gyro_avg", 6);
-  deriv_yaw_window = prefs.getInt("deriv_yaw_window", 15);
-  deriv_steer_window = prefs.getInt("deriv_steer_window", 15);
+  deriv_yaw_window = prefs.getInt("d_y_a", 15);
+  deriv_steer_window = prefs.getInt("d_y_s", 15);
+  steer_prio = prefs.getFloat("steer_prio", 1);
+  gyro_dp = prefs.getFloat("g_dp", 0.5);
 
-  p1 = prefs.getInt("p1", 10);
-  p2 = prefs.getInt("p2", 20);
-  p3 = prefs.getInt("p3", 30);
-  p4 = prefs.getInt("p4", 40);
-  p5 = prefs.getFloat("p5", 0.5f);
-  p6 = prefs.getFloat("p6", 1.0f);
-  p7 = prefs.getFloat("p7", 2.5f);
-  p8 = prefs.getInt("p8", 1);
+  
   prefs.end();
 
   Serial.println("Settings loaded from NVS (or defaults)");
@@ -153,16 +143,12 @@ static void saveParameters() {
   prefs.begin("rc", false);
   prefs.putFloat("gain_main", gain_main);
   prefs.putInt("gyro_avg", gyro_avg);
-  prefs.putInt("deriv_yaw_window", deriv_yaw_window);
-  prefs.putInt("deriv_steer_window", deriv_steer_window);
-  prefs.putInt("p1", p1);
-  prefs.putInt("p2", p2);
-  prefs.putInt("p3", p3);
-  prefs.putInt("p4", p4);
-  prefs.putFloat("p5", p5);
-  prefs.putFloat("p6", p6);
-  prefs.putFloat("p7", p7);
-  prefs.putInt("p8", p8);
+  prefs.putInt("d_y_a", deriv_yaw_window);
+  prefs.putInt("d_y_s", deriv_steer_window);
+  prefs.putInt("s_p", steer_prio);
+  prefs.putInt("s_dp", gyro_dp);
+
+ 
   prefs.end();
 }
 
@@ -259,16 +245,12 @@ static void handleSettings() {
   s += "<form method='POST' action='/settings/set'>";
   s += "<div class='formgrid'>";
 
-  s += "<label for='gain_main'>gain_main</label><input class='val8' id='gain_main' name='gain_main' type='number' step='any' value='" + String(gain_main) + "'>";
+  s += "<label for='gain_main'>gain_main</label><input class='val8' id='gain_main' name='gain_main' type='number' step='0.05' value='" + String(gain_main) + "'>";
   s += "<label for='gyro_avg'>gyro_avg</label><input class='val8' id='gyro_avg' name='gyro_avg' type='number' value='" + String(gyro_avg) + "'>";
   s += "<label for='deriv_yaw_window'>deriv_yaw_window</label><input class='val8' id='deriv_yaw_window' name='deriv_yaw_window' type='number' value='" + String(deriv_yaw_window) + "'>";
   s += "<label for='deriv_steer_window'>deriv_steer_window</label><input class='val8' id='deriv_steer_window' name='deriv_steer_window' type='number' value='" + String(deriv_steer_window) + "'>";
-
-  s += "<label for='p5'>Gyro filter (0-1)</label><input class='val8' id='p5' name='p5' type='number' step='any' value='" + String(p5, 6) + "'>";
-  s += "<label for='p6'>Steering filter (0-1)</label><input class='val8' id='p6' name='p6' type='number' step='any' value='" + String(p6, 6) + "'>";
-  s += "<label for='p7'>Drift detection (0-1)</label><input class='val8' id='p7' name='p7' type='number' step='any' value='" + String(p7, 6) + "'>";
-
-  s += "<label for='p8'>Steering marginal (0-1)</label><input class='val8' id='p8' name='p8' type='number' value='" + String(p8) + "'>";
+  s += "<label for='steer_prio'>steer_prio</label><input class='val8' id='steer_prio' name='steer_prio' type='number' step='0.05' value='" + String(steer_prio) + "'>";
+  s += "<label for='gyro_dp'>gyro_dp</label><input class='val8' id='gyro_dp' name='gyro_dp' type='number' step='0.05' value='" + String(gyro_dp) + "'>";
 
   s += "</div>";
 
@@ -287,11 +269,10 @@ static void handleSettingsSet() {
   gyro_avg = getArgInt("gyro_avg", gyro_avg);
   deriv_yaw_window = getArgInt("deriv_yaw_window", deriv_yaw_window);
   deriv_steer_window = getArgInt("deriv_steer_window", deriv_steer_window);
-  p4 = getArgInt("p4", p4);
-  p5 = getArgFloat("p5", p5);
-  p6 = getArgFloat("p6", p6);
-  p7 = getArgFloat("p7", p7);
-  p8 = getArgInt("p8", p8);
+  steer_prio = getArgFloat("steer_prio", steer_prio);
+  gyro_dp = getArgFloat("gyro_dp", gyro_dp);
+  Serial.print("gyro_avg="); Serial.print(gyro_avg);
+  Serial.print("deriv_yaw_window="); Serial.print(deriv_yaw_window);
 
   saveParameters();
 
@@ -352,14 +333,14 @@ void makeSettings() {
     ws.loop();
 
     // Push ~5 Hz
-    if (millis() - lastPush >= 200) {
+    if (millis() - lastPush >= 100) {
       lastPush = millis();
       String msg = "{\"steer\":" + String(getSteerPwSnapshot()) + "}";
       ws.broadcastTXT(msg);
       steerServo.writeMicroseconds(getSteerPwSnapshot());
     }
 
-    delay(1);
+    delay(2);
   }
 
   server.stop();                 // stop HTTP
