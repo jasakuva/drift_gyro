@@ -121,7 +121,7 @@ static void loadSettings() {
   gyro_avg = prefs.getInt("gyro_avg", 6);
   deriv_yaw_window = prefs.getInt("d_y_a", 15);
   deriv_steer_window = prefs.getInt("d_y_s", 15);
-  steer_prio = prefs.getFloat("steer_prio", 1);
+  steer_prio = prefs.getFloat("s_p", 1);
   gyro_dp = prefs.getFloat("g_dp", 0.5);
 
   
@@ -145,8 +145,8 @@ static void saveParameters() {
   prefs.putInt("gyro_avg", gyro_avg);
   prefs.putInt("d_y_a", deriv_yaw_window);
   prefs.putInt("d_y_s", deriv_steer_window);
-  prefs.putInt("s_p", steer_prio);
-  prefs.putInt("s_dp", gyro_dp);
+  prefs.putFloat("s_p", steer_prio);
+  prefs.putFloat("g_dp", gyro_dp);
 
  
   prefs.end();
@@ -327,7 +327,7 @@ void makeSettings() {
 
   uint32_t start = millis();
   uint32_t lastPush = 0;
-
+  //exitSettings = 0;
   while (millis() - start < 600000 && exitSettings == 0) {
     server.handleClient();
     ws.loop();

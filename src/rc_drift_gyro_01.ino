@@ -122,8 +122,8 @@ static void loadSettings_2() {
   gyro_avg_2  = prefs_2.getInt("gyro_avg", 6);
   deriv_yaw_window_2 = prefs_2.getInt("d_y_a", 15);
   deriv_steer_window_2 = prefs_2.getInt("d_y_s", 5);
-  steer_prio_2 = prefs_2.getFloat("steer_prio", 1);
-  gyro_dp_2 = prefs_2.getFloat("gyro_dp", 0.5);
+  steer_prio_2 = prefs_2.getFloat("s_p", 1.0);
+  gyro_dp_2 = prefs_2.getFloat("g_dp", 0.5);
   
 
   Serial.print("gyro_avg_2="); Serial.print(gyro_avg_2);
@@ -146,10 +146,10 @@ void setup() {
   
   steerServo.setTimerWidth(14);
   
-  for (int us = 1600; us >= 1400; us -= 1) {
-    steerServo.writeMicroseconds(us);
-    delay(5);
-  }
+  //for (int us = 1600; us >= 1400; us -= 1) {
+  //  steerServo.writeMicroseconds(us);
+  //  delay(5);
+  //}
 
   attachInterrupt(digitalPinToInterrupt(PIN_STEER_IN), isrSteer, CHANGE);
   attachInterrupt(digitalPinToInterrupt(PIN_GAIN_IN),  isrGain,  CHANGE);
@@ -221,15 +221,18 @@ void loop() {
   float normSteering = mySteeringMap.getNormalized(steerIn);
 
   // Read gyro
-  myCodeCell.Motion_GyroRead(Roll, Pitch, Yaw); 
-  
+  if (myCodeCell.Run(100)) { 
+    myCodeCell.Motion_GyroRead(Roll, Pitch, Yaw); 
+  }
+
   float Result_gyro = moving_average_gyro(Yaw * 115.0f, gyro_avg_2);
 
   // go to settings mode if steerin near epa and no yaw rate
-  if ((steerIn < epa_low_us_2+10 || steerIn > epa_high_us_2-10) && abs(Result_gyro) < 2) {
+  if ((steerIn < epa_low_us_2+50 || steerIn > epa_high_us_2-50) && abs(Result_gyro) < 15) {
     to_settings_counter++;
     if (to_settings_counter > 400) {
       makeSettings();
+      loadSettings_2();
       to_settings_counter = 0;
     }
   } else {
