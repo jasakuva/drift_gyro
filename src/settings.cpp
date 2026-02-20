@@ -327,7 +327,7 @@ void makeSettings() {
 
   uint32_t start = millis();
   uint32_t lastPush = 0;
-  //exitSettings = 0;
+  exitSettings = 0;
   while (millis() - start < 600000 && exitSettings == 0) {
     server.handleClient();
     ws.loop();

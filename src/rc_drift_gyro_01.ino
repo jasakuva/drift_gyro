@@ -16,6 +16,8 @@ float Pitch;
 float Yaw;
 volatile float yawRate_dps;
 
+float lastGyroCorrection;
+
 Preferences prefs_2;
 
 CodeCell myCodeCell;
@@ -252,16 +254,21 @@ void loop() {
   float gain = ((float)gainIn - 1000.0f) / 1000.0f;  // 0..1
   gain = clamp16((int16_t)(gain * 1000), 0, 1000) / 1000.0f;
   
-  float gyro_correction = gain_main_2*(gyro_dp_2*(yawRateFilt / 180.0f)*(gain/3) + (1-gyro_dp_2)*(dYawRate.get() / 50.0f)*(gain));
+  float gyro_correction = gain_main_2*((1.0f-gyro_dp_2)*(yawRateFilt / 30.0f)*(gain) + (gyro_dp_2)*(dYawRate.get() / 50.0f)*(gain));
   
   float corr = gyro_correction / (1.0f + (abs(dSteering.get())/2.0f)*steer_prio_2);
+  if(abs(corr) < abs(lastGyroCorrection)) {
+    corr = (corr+12.0*lastGyroCorrection)/13.0;
+  }
+
+  lastGyroCorrection = corr;
 
   int16_t out = (int16_t)mySteeringMap.getServoMsValue(normSteering + corr);
   out = clamp16(out, epa_low_us_2, epa_high_us_2);
 
   steerServo.writeMicroseconds(out);
 
-  delay(6);
+  delay(5);
 
 
   // Debug
