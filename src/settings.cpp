@@ -36,6 +36,8 @@ int deriv_yaw_window = 15;
 int deriv_steer_window = 5;
 float steer_prio = 1;
 float gyro_dp = 0.5;
+int return_damping = 5;
+float gain_exp = 1;
 
 // Replace with your real measurement source (we’ll set it from s_pw snapshot)
 int current_steering_us = 1500;
@@ -123,6 +125,8 @@ static void loadSettings() {
   deriv_steer_window = prefs.getInt("d_y_s", 15);
   steer_prio = prefs.getFloat("s_p", 1);
   gyro_dp = prefs.getFloat("g_dp", 0.5);
+  return_damping = prefs.getInt("return_damp", 5);
+  gain_exp = prefs.getFloat("g_exp", 1);
 
   
   prefs.end();
@@ -147,8 +151,9 @@ static void saveParameters() {
   prefs.putInt("d_y_s", deriv_steer_window);
   prefs.putFloat("s_p", steer_prio);
   prefs.putFloat("g_dp", gyro_dp);
+  prefs.putInt("return_damp", return_damping);
+  prefs.putFloat("g_exp", gain_exp);
 
- 
   prefs.end();
 }
 
@@ -251,7 +256,8 @@ static void handleSettings() {
   s += "<label for='deriv_steer_window'>deriv_steer_window</label><input class='val8' id='deriv_steer_window' name='deriv_steer_window' type='number' value='" + String(deriv_steer_window) + "'>";
   s += "<label for='steer_prio'>steer_prio</label><input class='val8' id='steer_prio' name='steer_prio' type='number' step='0.05' value='" + String(steer_prio) + "'>";
   s += "<label for='gyro_dp'>gyro_dp</label><input class='val8' id='gyro_dp' name='gyro_dp' type='number' step='0.05' value='" + String(gyro_dp) + "'>";
-
+  s += "<label for='return_damping'>return_damping</label><input class='val8' id='return_damping' name='return_damping' type='number' step='1.0' value='" + String(return_damping) + "'>";
+  s += "<label for='gain_exp'>gain_exp</label><input class='val8' id='gain_exp' name='gain_exp' type='number' step='0.01' value='" + String(gain_exp) + "'>";
   s += "</div>";
 
   s += "<div style='margin-top:14px'><button type='submit'>Set</button></div>";
@@ -271,8 +277,10 @@ static void handleSettingsSet() {
   deriv_steer_window = getArgInt("deriv_steer_window", deriv_steer_window);
   steer_prio = getArgFloat("steer_prio", steer_prio);
   gyro_dp = getArgFloat("gyro_dp", gyro_dp);
-  Serial.print("gyro_avg="); Serial.print(gyro_avg);
-  Serial.print("deriv_yaw_window="); Serial.print(deriv_yaw_window);
+  return_damping = getArgInt("return_damping", return_damping);
+  gain_exp = getArgFloat("gain_exp", gain_exp);
+  //Serial.print("gyro_avg="); Serial.print(gyro_avg);
+  //Serial.print("deriv_yaw_window="); Serial.print(deriv_yaw_window);
 
   saveParameters();
 
@@ -333,7 +341,7 @@ void makeSettings() {
     ws.loop();
 
     // Push ~5 Hz
-    if (millis() - lastPush >= 100) {
+    if (millis() - lastPush >= 50) {
       lastPush = millis();
       String msg = "{\"steer\":" + String(getSteerPwSnapshot()) + "}";
       ws.broadcastTXT(msg);

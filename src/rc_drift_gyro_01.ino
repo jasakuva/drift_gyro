@@ -2,10 +2,17 @@
 #include <ESP32Servo.h>
 #include "DerivativeN.h"
 #include "SteeringMap.h"
-#include <CodeCell.h>
+//#include <CodeCell.h>
 #include "settings.h"
 #include <Preferences.h>
 #include <Arduino.h>
+#include "myMovingAverage.h"
+
+#include <Wire.h>
+#include <Adafruit_BNO08x.h>
+
+#define SDA_PIN 8
+#define SCL_PIN 9
 
 portMUX_TYPE s_mux = portMUX_INITIALIZER_UNLOCKED;
 
@@ -20,12 +27,15 @@ float lastGyroCorrection;
 
 Preferences prefs_2;
 
-CodeCell myCodeCell;
+//CodeCell myCodeCell;
+Adafruit_BNO08x bno08x;
 
 Servo steerServo;
 
 DerivativeN dYawRate(20);
 DerivativeN dSteering(10);
+DerivativeN dOutput_long(50);
+myMovingAverage<50> norm_output_avg;
 
 float gz_offset;
 
@@ -63,6 +73,8 @@ int deriv_steer_window_2;
 float steer_prio_2;
 float gyro_dp_2;
 int debug_serial_2=0;
+int return_damping_2=5;
+float gain_exp_2=1;
 
 int to_settings_counter;
 
@@ -126,6 +138,8 @@ static void loadSettings_2() {
   deriv_steer_window_2 = prefs_2.getInt("d_y_s", 5);
   steer_prio_2 = prefs_2.getFloat("s_p", 1.0);
   gyro_dp_2 = prefs_2.getFloat("g_dp", 0.5);
+  return_damping_2 = prefs_2.getInt("return_damp",5);
+  gain_exp_2 = prefs_2.getFloat("g_exp", 1);
   
 
   Serial.print("gyro_avg_2="); Serial.print(gyro_avg_2);
@@ -139,7 +153,17 @@ void setup() {
 
   loadSettings_2();
 
-  myCodeCell.Init(MOTION_GYRO);
+  //myCodeCell.Init(MOTION_GYRO);
+  Wire.begin(SDA_PIN, SCL_PIN);   // 👈 Set custom I2C pins
+  Wire.setClock(400000);   // 400kHz I2C
+
+  if (!bno08x.begin_I2C()) {
+    Serial.println("BNO085 not found");
+    while (1);
+  }
+  Serial.println("BNO085 found");
+  bno08x.enableReport(SH2_GYROSCOPE_UNCALIBRATED, 5000);
+
   pinMode(PIN_STEER_IN, INPUT);
   pinMode(PIN_GAIN_IN, INPUT);
   delay(500);
@@ -223,8 +247,16 @@ void loop() {
   float normSteering = mySteeringMap.getNormalized(steerIn);
 
   // Read gyro
-  if (myCodeCell.Run(100)) { 
-    myCodeCell.Motion_GyroRead(Roll, Pitch, Yaw); 
+  //if (myCodeCell.Run(100)) { 
+  //  myCodeCell.Motion_GyroRead(Roll, Pitch, Yaw); 
+  //}
+
+  sh2_SensorValue_t sensorValue;
+
+  if (bno08x.getSensorEvent(&sensorValue)) {
+    if (sensorValue.sensorId == SH2_GYROSCOPE_UNCALIBRATED) {
+      Yaw = sensorValue.un.gyroscope.z;
+    }
   }
 
   float Result_gyro = moving_average_gyro(Yaw * 115.0f, gyro_avg_2);
@@ -257,18 +289,38 @@ void loop() {
   float gyro_correction = gain_main_2*((1.0f-gyro_dp_2)*(yawRateFilt / 30.0f)*(gain) + (gyro_dp_2)*(dYawRate.get() / 50.0f)*(gain));
   
   float corr = gyro_correction / (1.0f + (abs(dSteering.get())/2.0f)*steer_prio_2);
-  if(abs(corr) < abs(lastGyroCorrection)) {
-    corr = (corr+12.0*lastGyroCorrection)/13.0;
+  if(fabs(corr) < fabs(lastGyroCorrection)) {
+    corr = (corr+static_cast<float>(return_damping_2)*lastGyroCorrection)/static_cast<float>(return_damping_2+1);
+  }
+  
+  if (corr != 0.0f) {
+    corr = (corr > 0.0f ? 1.0f : -1.0f) * powf(fabs(corr), gain_exp_2);
+  } else {
+      corr = 0.0f; // avoid powf(0, <=0)
   }
 
+  
+
+  // slow down correction in near center
+  //float combined = normSteering + corr;
+  //if (fabs(combined) < 0.1f && fabs(norm_output_avg.get()) < 0.05 ) {
+  //  corr = (combined)*10.0f*corr;
+  //}
+  //float scale = fabs(combined) / 0.1f;  // linear from 0 to 1
+  //if (scale > 1.0f ) scale = 1.0f;       // clamp to max 1
+  //corr *= scale;
+
   lastGyroCorrection = corr;
+
+  dOutput_long.add(normSteering + corr);
+  norm_output_avg.update(normSteering + corr);
 
   int16_t out = (int16_t)mySteeringMap.getServoMsValue(normSteering + corr);
   out = clamp16(out, epa_low_us_2, epa_high_us_2);
 
   steerServo.writeMicroseconds(out);
 
-  delay(5);
+  delay(2);
 
 
   // Debug
@@ -287,49 +339,3 @@ void loop() {
     Serial.print(" out="); Serial.println(out);
   }
 }
-
-  bool calibrateYawAvg(CodeCell& cc, float& avgOut) {
-  constexpr int MAX_READS   = 100;
-  constexpr int WINDOW_SIZE_2 = 10;
-  constexpr int WAIT_MS     = 20;
-  constexpr float STD_EPS   = 1e-6f;  // float tolerance for "0"
-
-  float roll = 0, pitch = 0, yaw = 0;
-  float buf[WINDOW_SIZE_2] = {0};
-
-  int idx = 0;
-  int filled = 0;
-
-  for (int i = 0; i < MAX_READS; ++i) {
-    cc.Motion_GyroRead(roll, pitch, yaw);
-
-    buf[idx] = yaw;
-    idx = (idx + 1) % WINDOW_SIZE_2;
-    if (filled < WINDOW_SIZE_2) filled++;
-
-    if (filled == WINDOW_SIZE_2) {
-      // Compute average
-      float sum = 0.0f;
-      for (int j = 0; j < WINDOW_SIZE_2; ++j) sum += buf[j];
-      float avg = sum / WINDOW_SIZE_2;
-
-      // Compute std deviation
-      float var = 0.0f;
-      for (int j = 0; j < WINDOW_SIZE_2; ++j) {
-        float d = buf[j] - avg;
-        var += d * d;
-      }
-      var /= WINDOW_SIZE_2;
-      float stddev = sqrtf(var);
-
-      if (stddev <= STD_EPS) {
-        avgOut = avg;
-        return true;   // ✅ success
-      }
-    }
-
-    delay(WAIT_MS);
-  }
-
-  return false;  // ❌ no stable window found
-  }
