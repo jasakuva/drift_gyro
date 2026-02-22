@@ -38,6 +38,10 @@ float steer_prio = 1;
 float gyro_dp = 0.5;
 int return_damping = 5;
 float gain_exp = 1;
+int gyro_lp_hz=20;
+int derivative_lp_hz=20;
+int servo_in_lp_hz=20;
+int servo_out_lp_hz=20;
 
 // Replace with your real measurement source (we’ll set it from s_pw snapshot)
 int current_steering_us = 1500;
@@ -127,6 +131,10 @@ static void loadSettings() {
   gyro_dp = prefs.getFloat("g_dp", 0.5);
   return_damping = prefs.getInt("return_damp", 5);
   gain_exp = prefs.getFloat("g_exp", 1);
+  gyro_lp_hz = prefs.getInt("gyro_lp_hz", 20);
+  derivative_lp_hz = prefs.getInt("d_lp_hz", 20);
+  servo_in_lp_hz = prefs.getInt("s_in_lp", 20);
+  servo_out_lp_hz = prefs.getInt("s_out_lp", 20);
 
   
   prefs.end();
@@ -153,6 +161,10 @@ static void saveParameters() {
   prefs.putFloat("g_dp", gyro_dp);
   prefs.putInt("return_damp", return_damping);
   prefs.putFloat("g_exp", gain_exp);
+  prefs.putInt("gyro_lp_hz", gyro_lp_hz);
+  prefs.putInt("d_lp_hz", derivative_lp_hz);
+  prefs.putInt("s_in_lp", servo_in_lp_hz);
+  prefs.putInt("s_out_lp", servo_out_lp_hz);
 
   prefs.end();
 }
@@ -258,6 +270,11 @@ static void handleSettings() {
   s += "<label for='gyro_dp'>gyro_dp</label><input class='val8' id='gyro_dp' name='gyro_dp' type='number' step='0.05' value='" + String(gyro_dp) + "'>";
   s += "<label for='return_damping'>return_damping</label><input class='val8' id='return_damping' name='return_damping' type='number' step='1.0' value='" + String(return_damping) + "'>";
   s += "<label for='gain_exp'>gain_exp</label><input class='val8' id='gain_exp' name='gain_exp' type='number' step='0.01' value='" + String(gain_exp) + "'>";
+  s += "<label for='gyro_lp_hz'>gyro_lp_hz</label><input class='val8' id='gyro_lp_hz' name='gyro_lp_hz' type='number' step='1.0' value='" + String(gyro_lp_hz) + "'>";
+  s += "<label for='derivative_lp_hz'>derivative_lp_hz</label><input class='val8' id='derivative_lp_hz' name='derivative_lp_hz' type='number' step='1.0' value='" + String(derivative_lp_hz) + "'>";
+  s += "<label for='servo_in_lp_hz'>servo_in_lp_hz</label><input class='val8' id='servo_in_lp_hz' name='servo_in_lp_hz' type='number' step='1.0' value='" + String(servo_in_lp_hz) + "'>";
+  s += "<label for='servo_out_lp_hz'>servo_out_lp_hz</label><input class='val8' id='servo_out_lp_hz' name='servo_out_lp_hz' type='number' step='1.0' value='" + String(servo_out_lp_hz) + "'>";
+
   s += "</div>";
 
   s += "<div style='margin-top:14px'><button type='submit'>Set</button></div>";
@@ -279,6 +296,10 @@ static void handleSettingsSet() {
   gyro_dp = getArgFloat("gyro_dp", gyro_dp);
   return_damping = getArgInt("return_damping", return_damping);
   gain_exp = getArgFloat("gain_exp", gain_exp);
+  gyro_lp_hz = getArgInt("gyro_lp_hz", gyro_lp_hz);
+  derivative_lp_hz = getArgInt("derivative_lp_hz", derivative_lp_hz);
+  servo_in_lp_hz = getArgInt("servo_in_lp_hz", servo_in_lp_hz);
+  servo_out_lp_hz = getArgInt("servo_out_lp_hz", servo_out_lp_hz);
   //Serial.print("gyro_avg="); Serial.print(gyro_avg);
   //Serial.print("deriv_yaw_window="); Serial.print(deriv_yaw_window);
 

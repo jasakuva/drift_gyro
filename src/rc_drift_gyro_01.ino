@@ -7,12 +7,16 @@
 #include <Preferences.h>
 #include <Arduino.h>
 #include "myMovingAverage.h"
+#include "lpfilter.h"
 
 #include <Wire.h>
 #include <Adafruit_BNO08x.h>
 
 #define SDA_PIN 8
 #define SCL_PIN 9
+
+const unsigned long LOOP_PERIOD_US = 2500;  // 2.5 ms
+unsigned long nextLoopTime;
 
 portMUX_TYPE s_mux = portMUX_INITIALIZER_UNLOCKED;
 
@@ -31,6 +35,11 @@ Preferences prefs_2;
 Adafruit_BNO08x bno08x;
 
 Servo steerServo;
+lpfilter gyro_lp(20.0, 0.0025);
+lpfilter derivative_lp(20.0, 0.0025);
+lpfilter servoin_lp(20.0, 0.0025);
+lpfilter servoout_lp(20.0, 0.0025);
+
 
 DerivativeN dYawRate(20);
 DerivativeN dSteering(10);
@@ -53,18 +62,6 @@ int epa_low_us_2   = 1100;
 int epa_center_us_2 = 1500;
 int epa_high_us_2  = 1900;
 
-// Replace with your real measurement source (we’ll set it from s_pw snapshot)
-//int current_steering_us = 1500;
-
-// ---------- Settings variables (8 parameters) ----------
-//int   p1;
-//int   p2;
-//int   p3;
-//int   p4;
-//float p5;
-//float p6;
-//float p7;
-//int   p8;
 
 float gain_main_2;
 int gyro_avg_2;
@@ -75,6 +72,10 @@ float gyro_dp_2;
 int debug_serial_2=0;
 int return_damping_2=5;
 float gain_exp_2=1;
+int gyro_lp_hz_2=20;
+int derivative_lp_hz_2=20;
+int servo_in_lp_hz_2=20;
+int servo_out_lp_hz_2=20;
 
 int to_settings_counter;
 
@@ -140,11 +141,21 @@ static void loadSettings_2() {
   gyro_dp_2 = prefs_2.getFloat("g_dp", 0.5);
   return_damping_2 = prefs_2.getInt("return_damp",5);
   gain_exp_2 = prefs_2.getFloat("g_exp", 1);
+  gyro_lp_hz_2 = prefs_2.getInt("gyro_lp_hz", 20);
+  derivative_lp_hz_2 = prefs_2.getInt("d_lp_hz", 20);
+  servo_in_lp_hz_2 = prefs_2.getInt("s_in_lp", 20);
+  servo_out_lp_hz_2 = prefs_2.getInt("s_out_lp", 20);
+
+  // set low pass filters
+  gyro_lp.setCutoff(gyro_lp_hz_2);
+  derivative_lp.setCutoff(derivative_lp_hz_2);
+  servoin_lp.setCutoff(servo_in_lp_hz_2);
+  servoout_lp.setCutoff(servo_out_lp_hz_2);
+
+  // set dirivatives
+  dYawRate.setWindow(deriv_yaw_window_2);
+  dSteering.setWindow(deriv_steer_window_2);
   
-
-  Serial.print("gyro_avg_2="); Serial.print(gyro_avg_2);
-  Serial.print("deriv_yaw_window_2="); Serial.print(deriv_yaw_window_2);
-
   prefs_2.end();
 }
 
@@ -156,13 +167,13 @@ void setup() {
   //myCodeCell.Init(MOTION_GYRO);
   Wire.begin(SDA_PIN, SCL_PIN);   // 👈 Set custom I2C pins
   Wire.setClock(400000);   // 400kHz I2C
-
+  delay(50);
   if (!bno08x.begin_I2C()) {
     Serial.println("BNO085 not found");
     while (1);
   }
   Serial.println("BNO085 found");
-  bno08x.enableReport(SH2_GYROSCOPE_UNCALIBRATED, 5000);
+  bno08x.enableReport(SH2_GYROSCOPE_UNCALIBRATED, 500);
 
   pinMode(PIN_STEER_IN, INPUT);
   pinMode(PIN_GAIN_IN, INPUT);
@@ -180,12 +191,7 @@ void setup() {
   attachInterrupt(digitalPinToInterrupt(PIN_STEER_IN), isrSteer, CHANGE);
   attachInterrupt(digitalPinToInterrupt(PIN_GAIN_IN),  isrGain,  CHANGE);
 
-  delay(1000);
-
-  //for (int i = 0; i < 10000; i++) {
-  //  steerServo.writeMicroseconds(s_pw);
-  //  delay(5);
-  //}
+  delay(200);
 
   //makeSettings();
 
@@ -196,16 +202,18 @@ void setup() {
 
   loadSettings_2();
 
-  delay(5000);
+  delay(500);
 
-  dYawRate.setWindow(deriv_yaw_window_2);
-  dSteering.setWindow(deriv_steer_window_2);
+  //dYawRate.setWindow(deriv_yaw_window_2);
+  //dSteering.setWindow(deriv_steer_window_2);
 
   //if (calibrateYawAvg(myCodeCell, gz_offset)) {
   //gz_offset = gz_offset;   // store calibration
   //} else {
-    Serial.println("Yaw calibration failed");
+  //  Serial.println("Yaw calibration failed");
   //}
+
+  nextLoopTime = micros();
   
 }
 
@@ -231,26 +239,27 @@ float moving_average_gyro(float new_value, int avg_size)
 }
 
 void loop() {
+  
+  long startTime = micros();
+  
   // Read RC pulses atomically
   uint16_t steerIn, gainIn;
   //noInterrupts();
+  portENTER_CRITICAL(&s_mux);
   steerIn = s_pw;
   //steerIn = 1500;
   gainIn  = g_pw;
+  portEXIT_CRITICAL(&s_mux);
   //interrupts();
 
-  
+  steerIn = servoin_lp.update(steerIn);
 
   // Convert steer to signed
   int16_t steer = (int16_t)steerIn - RC_MID; // -500..+500
 
   float normSteering = mySteeringMap.getNormalized(steerIn);
 
-  // Read gyro
-  //if (myCodeCell.Run(100)) { 
-  //  myCodeCell.Motion_GyroRead(Roll, Pitch, Yaw); 
-  //}
-
+  long time1 = micros() - startTime;
   sh2_SensorValue_t sensorValue;
 
   if (bno08x.getSensorEvent(&sensorValue)) {
@@ -258,13 +267,21 @@ void loop() {
       Yaw = sensorValue.un.gyroscope.z;
     }
   }
+  long time2 = micros() - startTime;
+  
+  long loopTime = micros()-nextLoopTime;
+  // Wait until next 5ms boundary
+  while ((long)(micros() - nextLoopTime) < 0) {
+    yield();
+  }
+  nextLoopTime += LOOP_PERIOD_US;
 
   float Result_gyro = moving_average_gyro(Yaw * 115.0f, gyro_avg_2);
 
   // go to settings mode if steerin near epa and no yaw rate
-  if ((steerIn < epa_low_us_2+50 || steerIn > epa_high_us_2-50) && abs(Result_gyro) < 15) {
+  if ((steerIn < epa_low_us_2+50 || steerIn > epa_high_us_2-50) && abs(Result_gyro) < 3) {
     to_settings_counter++;
-    if (to_settings_counter > 400) {
+    if (to_settings_counter > 2000) {
       makeSettings();
       loadSettings_2();
       to_settings_counter = 0;
@@ -278,15 +295,20 @@ void loop() {
   // Low-pass filter yaw rate to reduce twitch
   static float yawRateFilt = 0.0f;
   // yawRateFilt = lpf(yawRateFilt, yawRate_dps, 0.2f); // alpha 0.1..0.3 typical
+  yawRate_dps = gyro_lp.update(yawRate_dps);
   yawRateFilt = yawRate_dps;
 
   dYawRate.add(yawRateFilt);
+
+  float filtered_yaw_derivative = derivative_lp.update(dYawRate.get());
   dSteering.add(normSteering);
 
   float gain = ((float)gainIn - 1000.0f) / 1000.0f;  // 0..1
   gain = clamp16((int16_t)(gain * 1000), 0, 1000) / 1000.0f;
+
+  long time3 = micros() - startTime;
   
-  float gyro_correction = gain_main_2*((1.0f-gyro_dp_2)*(yawRateFilt / 30.0f)*(gain) + (gyro_dp_2)*(dYawRate.get() / 50.0f)*(gain));
+  float gyro_correction = gain_main_2*((1.0f-gyro_dp_2)*(yawRateFilt / 30.0f)*(gain) + (gyro_dp_2)*(filtered_yaw_derivative / 50.0f)*(gain));
   
   float corr = gyro_correction / (1.0f + (abs(dSteering.get())/2.0f)*steer_prio_2);
   if(fabs(corr) < fabs(lastGyroCorrection)) {
@@ -311,31 +333,39 @@ void loop() {
   //corr *= scale;
 
   lastGyroCorrection = corr;
-
+  long time4 = micros() - startTime;
   dOutput_long.add(normSteering + corr);
   norm_output_avg.update(normSteering + corr);
-
+  long time5 = micros() - startTime;
   int16_t out = (int16_t)mySteeringMap.getServoMsValue(normSteering + corr);
   out = clamp16(out, epa_low_us_2, epa_high_us_2);
 
+  out = servoout_lp.update(out);
   steerServo.writeMicroseconds(out);
-
-  delay(2);
-
+  long time6 = micros() - startTime;
+  //delay(2);
 
   // Debug
   static uint32_t lastPrint = 0;
-  if (millis() - lastPrint > 200 && debug_serial_2 == 1) {
+  //if (millis() - lastPrint > 200 && debug_serial_2 == 1) {
+  if (millis() - lastPrint > 200) {  
     lastPrint = millis();
-    Serial.print("corr="); Serial.print(corr);
-    Serial.print("Result_gyro="); Serial.print(Result_gyro);
-    Serial.print("gyro_correction="); Serial.print(gyro_correction);
-    Serial.print("yawRateFilt="); Serial.print(yawRateFilt);
-    Serial.print("dYawRate.get()="); Serial.print(dYawRate.get());
-    Serial.print("normSteering="); Serial.print(normSteering);
-    Serial.print(" yaw(dps)="); Serial.print(yawRateFilt);
-    Serial.print(" gain="); Serial.print(gain);
-    Serial.print(" steerIn="); Serial.print(steerIn);
-    Serial.print(" out="); Serial.println(out);
+    //Serial.print("corr="); Serial.print(corr);
+    //Serial.print("Result_gyro="); Serial.print(Result_gyro);
+    //Serial.print("gyro_correction="); Serial.print(gyro_correction);
+    //Serial.print("yawRateFilt="); Serial.print(yawRateFilt);
+    //Serial.print("dYawRate.get()="); Serial.print(dYawRate.get());
+    //Serial.print("normSteering="); Serial.print(normSteering);
+    //Serial.print(" yaw(dps)="); Serial.print(yawRateFilt);
+    //Serial.print(" gain="); Serial.print(gain);
+    //Serial.print(" steerIn="); Serial.print(steerIn);
+    //Serial.print(" out="); Serial.println(out);
+    //Serial.print(" looptime="); Serial.println(loopTime);
+    Serial.print(" 1="); Serial.print(time1);
+    Serial.print(" 2="); Serial.print(time2);
+    Serial.print(" 3="); Serial.print(time3);
+    Serial.print(" 4="); Serial.print(time4);
+    Serial.print(" 5="); Serial.print(time5);
+    Serial.print(" 6="); Serial.println(time6);
   }
 }
