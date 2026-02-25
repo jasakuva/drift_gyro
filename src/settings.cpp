@@ -42,6 +42,8 @@ int gyro_lp_hz=20;
 int derivative_lp_hz=20;
 int servo_in_lp_hz=20;
 int servo_out_lp_hz=20;
+float vpid_p=5;
+float vpid_d=1;
 
 // Replace with your real measurement source (we’ll set it from s_pw snapshot)
 int current_steering_us = 1500;
@@ -135,6 +137,8 @@ static void loadSettings() {
   derivative_lp_hz = prefs.getInt("d_lp_hz", 20);
   servo_in_lp_hz = prefs.getInt("s_in_lp", 20);
   servo_out_lp_hz = prefs.getInt("s_out_lp", 20);
+  vpid_p = prefs.getFloat("pid_p", 5);
+  vpid_d = prefs.getFloat("pid_d", 1);
 
   
   prefs.end();
@@ -165,6 +169,8 @@ static void saveParameters() {
   prefs.putInt("d_lp_hz", derivative_lp_hz);
   prefs.putInt("s_in_lp", servo_in_lp_hz);
   prefs.putInt("s_out_lp", servo_out_lp_hz);
+  prefs.putFloat("pid_p", vpid_p);
+  prefs.putFloat("pid_d", vpid_d);
 
   prefs.end();
 }
@@ -267,7 +273,9 @@ static void handleSettings() {
   s += "<label for='deriv_yaw_window'>deriv_yaw_window</label><input class='val8' id='deriv_yaw_window' name='deriv_yaw_window' type='number' value='" + String(deriv_yaw_window) + "'>";
   s += "<label for='deriv_steer_window'>deriv_steer_window</label><input class='val8' id='deriv_steer_window' name='deriv_steer_window' type='number' value='" + String(deriv_steer_window) + "'>";
   s += "<label for='steer_prio'>steer_prio</label><input class='val8' id='steer_prio' name='steer_prio' type='number' step='0.05' value='" + String(steer_prio) + "'>";
-  s += "<label for='gyro_dp'>gyro_dp</label><input class='val8' id='gyro_dp' name='gyro_dp' type='number' step='0.05' value='" + String(gyro_dp) + "'>";
+  //s += "<label for='gyro_dp'>gyro_dp</label><input class='val8' id='gyro_dp' name='gyro_dp' type='number' step='0.05' value='" + String(gyro_dp) + "'>";
+  s += "<label for='pid_p'>pid_p</label><input class='val8' id='pid_p' name='pid_p' type='number' step='0.05' value='" + String(vpid_p) + "'>";
+  s += "<label for='pid_d'>pid_d</label><input class='val8' id='pid_d' name='pid_d' type='number' step='0.05' value='" + String(vpid_d) + "'>";
   s += "<label for='return_damping'>return_damping</label><input class='val8' id='return_damping' name='return_damping' type='number' step='1.0' value='" + String(return_damping) + "'>";
   s += "<label for='gain_exp'>gain_exp</label><input class='val8' id='gain_exp' name='gain_exp' type='number' step='0.01' value='" + String(gain_exp) + "'>";
   s += "<label for='gyro_lp_hz'>gyro_lp_hz</label><input class='val8' id='gyro_lp_hz' name='gyro_lp_hz' type='number' step='1.0' value='" + String(gyro_lp_hz) + "'>";
@@ -293,7 +301,9 @@ static void handleSettingsSet() {
   deriv_yaw_window = getArgInt("deriv_yaw_window", deriv_yaw_window);
   deriv_steer_window = getArgInt("deriv_steer_window", deriv_steer_window);
   steer_prio = getArgFloat("steer_prio", steer_prio);
-  gyro_dp = getArgFloat("gyro_dp", gyro_dp);
+  //gyro_dp = getArgFloat("gyro_dp", gyro_dp);
+  vpid_p = getArgFloat("pid_p", vpid_p);
+  vpid_d = getArgFloat("pid_d", vpid_d);
   return_damping = getArgInt("return_damping", return_damping);
   gain_exp = getArgFloat("gain_exp", gain_exp);
   gyro_lp_hz = getArgInt("gyro_lp_hz", gyro_lp_hz);
