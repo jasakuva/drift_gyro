@@ -13,6 +13,10 @@ void lpfilter::setCutoff(float cutoffFrequency) {
   k = o / (o + 1.0f);
 }
 
+float lpfilter::get() {
+  return lastOutput;
+}
+
 float lpfilter::update(float data) {
   lastOutput = lastOutput + k * (data - lastOutput);
   return lastOutput;

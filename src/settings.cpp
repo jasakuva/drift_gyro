@@ -6,6 +6,10 @@
 #include <WebSocketsServer.h>
 #include <ESP32Servo.h>
 
+#include "ControlParams.h"
+
+extern ControlParams cp;   // global instance from main.ino
+
 // -----------------------
 // Externs from main.ino
 // -----------------------
@@ -30,20 +34,7 @@ int epa_low_us   = 1100;
 int epa_center_us = 1500;
 int epa_high_us  = 1900;
 
-float gain_main = 1;
-int gyro_avg = 6;
-int deriv_yaw_window = 15;
-int deriv_steer_window = 5;
-float steer_prio = 1;
-float gyro_dp = 0.5;
-int return_damping = 5;
-float gain_exp = 1;
-int gyro_lp_hz=20;
-int derivative_lp_hz=20;
-int servo_in_lp_hz=20;
-int servo_out_lp_hz=20;
-float vpid_p=5;
-float vpid_d=1;
+// Parameters are stored in global ControlParams cp
 
 // Replace with your real measurement source (we’ll set it from s_pw snapshot)
 int current_steering_us = 1500;
@@ -125,22 +116,18 @@ static void loadSettings() {
   epa_center_us = prefs.getInt("epaC", 1500);
   epa_high_us  = prefs.getInt("epaH", 1900);
   
-  gain_main = prefs.getFloat("gain_main", 1);
-  gyro_avg = prefs.getInt("gyro_avg", 6);
-  deriv_yaw_window = prefs.getInt("d_y_a", 15);
-  deriv_steer_window = prefs.getInt("d_y_s", 15);
-  steer_prio = prefs.getFloat("s_p", 1);
-  gyro_dp = prefs.getFloat("g_dp", 0.5);
-  return_damping = prefs.getInt("return_damp", 5);
-  gain_exp = prefs.getFloat("g_exp", 1);
-  gyro_lp_hz = prefs.getInt("gyro_lp_hz", 20);
-  derivative_lp_hz = prefs.getInt("d_lp_hz", 20);
-  servo_in_lp_hz = prefs.getInt("s_in_lp", 20);
-  servo_out_lp_hz = prefs.getInt("s_out_lp", 20);
-  vpid_p = prefs.getFloat("pid_p", 5);
-  vpid_d = prefs.getFloat("pid_d", 1);
+  cp.gain = prefs.getFloat("gain_main", 1.0);
+  cp.gyro_avg = prefs.getInt("gyro_avg", 6);
+  cp.debug_serial = prefs.getInt("debug_serial", 0);
+  cp.steering_prio = prefs.getFloat("s_p", 1.0);
+  cp.correction_exp = prefs.getFloat("g_exp", 1.0);
+  cp.gyro_lp_hz = prefs.getInt("gyro_lp_hz", 20);
+  cp.derivative_lp_hz = prefs.getInt("d_lp_hz", 20);
+  cp.steer_in_lp_hz = prefs.getInt("s_in_lp", 20);
+  cp.steer_out_lp_hz = prefs.getInt("s_out_lp", 20);
+  cp.pid_p = prefs.getFloat("pid_p", 5.0);
+  cp.pid_d = prefs.getFloat("pid_d", 1.0);
 
-  
   prefs.end();
 
   Serial.println("Settings loaded from NVS (or defaults)");
@@ -157,20 +144,17 @@ static void saveEpa() {
 static void saveParameters() {
 
   prefs.begin("rc", false);
-  prefs.putFloat("gain_main", gain_main);
-  prefs.putInt("gyro_avg", gyro_avg);
-  prefs.putInt("d_y_a", deriv_yaw_window);
-  prefs.putInt("d_y_s", deriv_steer_window);
-  prefs.putFloat("s_p", steer_prio);
-  prefs.putFloat("g_dp", gyro_dp);
-  prefs.putInt("return_damp", return_damping);
-  prefs.putFloat("g_exp", gain_exp);
-  prefs.putInt("gyro_lp_hz", gyro_lp_hz);
-  prefs.putInt("d_lp_hz", derivative_lp_hz);
-  prefs.putInt("s_in_lp", servo_in_lp_hz);
-  prefs.putInt("s_out_lp", servo_out_lp_hz);
-  prefs.putFloat("pid_p", vpid_p);
-  prefs.putFloat("pid_d", vpid_d);
+  prefs.putFloat("gain_main", cp.gain);
+  prefs.putInt("gyro_avg", cp.gyro_avg);
+  prefs.putInt("debug_serial", cp.debug_serial);
+  prefs.putFloat("s_p", cp.steering_prio);
+  prefs.putFloat("g_exp", cp.correction_exp);
+  prefs.putInt("gyro_lp_hz", cp.gyro_lp_hz);
+  prefs.putInt("d_lp_hz", cp.derivative_lp_hz);
+  prefs.putInt("s_in_lp", cp.steer_in_lp_hz);
+  prefs.putInt("s_out_lp", cp.steer_out_lp_hz);
+  prefs.putFloat("pid_p", cp.pid_p);
+  prefs.putFloat("pid_d", cp.pid_d);
 
   prefs.end();
 }
@@ -268,20 +252,17 @@ static void handleSettings() {
   s += "<form method='POST' action='/settings/set'>";
   s += "<div class='formgrid'>";
 
-  s += "<label for='gain_main'>gain_main</label><input class='val8' id='gain_main' name='gain_main' type='number' step='0.05' value='" + String(gain_main) + "'>";
-  s += "<label for='gyro_avg'>gyro_avg</label><input class='val8' id='gyro_avg' name='gyro_avg' type='number' value='" + String(gyro_avg) + "'>";
-  s += "<label for='deriv_yaw_window'>deriv_yaw_window</label><input class='val8' id='deriv_yaw_window' name='deriv_yaw_window' type='number' value='" + String(deriv_yaw_window) + "'>";
-  s += "<label for='deriv_steer_window'>deriv_steer_window</label><input class='val8' id='deriv_steer_window' name='deriv_steer_window' type='number' value='" + String(deriv_steer_window) + "'>";
-  s += "<label for='steer_prio'>steer_prio</label><input class='val8' id='steer_prio' name='steer_prio' type='number' step='0.05' value='" + String(steer_prio) + "'>";
-  //s += "<label for='gyro_dp'>gyro_dp</label><input class='val8' id='gyro_dp' name='gyro_dp' type='number' step='0.05' value='" + String(gyro_dp) + "'>";
-  s += "<label for='pid_p'>pid_p</label><input class='val8' id='pid_p' name='pid_p' type='number' step='0.05' value='" + String(vpid_p) + "'>";
-  s += "<label for='pid_d'>pid_d</label><input class='val8' id='pid_d' name='pid_d' type='number' step='0.05' value='" + String(vpid_d) + "'>";
-  s += "<label for='return_damping'>return_damping</label><input class='val8' id='return_damping' name='return_damping' type='number' step='1.0' value='" + String(return_damping) + "'>";
-  s += "<label for='gain_exp'>gain_exp</label><input class='val8' id='gain_exp' name='gain_exp' type='number' step='0.01' value='" + String(gain_exp) + "'>";
-  s += "<label for='gyro_lp_hz'>gyro_lp_hz</label><input class='val8' id='gyro_lp_hz' name='gyro_lp_hz' type='number' step='1.0' value='" + String(gyro_lp_hz) + "'>";
-  s += "<label for='derivative_lp_hz'>derivative_lp_hz</label><input class='val8' id='derivative_lp_hz' name='derivative_lp_hz' type='number' step='1.0' value='" + String(derivative_lp_hz) + "'>";
-  s += "<label for='servo_in_lp_hz'>servo_in_lp_hz</label><input class='val8' id='servo_in_lp_hz' name='servo_in_lp_hz' type='number' step='1.0' value='" + String(servo_in_lp_hz) + "'>";
-  s += "<label for='servo_out_lp_hz'>servo_out_lp_hz</label><input class='val8' id='servo_out_lp_hz' name='servo_out_lp_hz' type='number' step='1.0' value='" + String(servo_out_lp_hz) + "'>";
+  s += "<label for='gain'>gain</label><input class='val8' id='gain' name='gain' type='number' step='0.05' value='" + String(cp.gain) + "'>";
+  s += "<label for='gyro_avg'>gyro_avg</label><input class='val8' id='gyro_avg' name='gyro_avg' type='number' step='1' value='" + String(cp.gyro_avg) + "'>";
+  s += "<label for='debug_serial'>debug_serial</label><input class='val8' id='debug_serial' name='debug_serial' type='number' step='1' value='" + String(cp.debug_serial) + "'>";
+  s += "<label for='steering_prio'>steering_prio</label><input class='val8' id='steering_prio' name='steering_prio' type='number' step='0.05' value='" + String(cp.steering_prio) + "'>";
+  s += "<label for='pid_p'>pid_p</label><input class='val8' id='pid_p' name='pid_p' type='number' step='0.05' value='" + String(cp.pid_p) + "'>";
+  s += "<label for='pid_d'>pid_d</label><input class='val8' id='pid_d' name='pid_d' type='number' step='0.05' value='" + String(cp.pid_d) + "'>";
+  s += "<label for='correction_exp'>correction_exp</label><input class='val8' id='correction_exp' name='correction_exp' type='number' step='0.01' value='" + String(cp.correction_exp) + "'>";
+  s += "<label for='gyro_lp_hz'>gyro_lp_hz</label><input class='val8' id='gyro_lp_hz' name='gyro_lp_hz' type='number' step='1' value='" + String(cp.gyro_lp_hz) + "'>";
+  s += "<label for='derivative_lp_hz'>derivative_lp_hz</label><input class='val8' id='derivative_lp_hz' name='derivative_lp_hz' type='number' step='1' value='" + String(cp.derivative_lp_hz) + "'>";
+  s += "<label for='steer_in_lp_hz'>steer_in_lp_hz</label><input class='val8' id='steer_in_lp_hz' name='steer_in_lp_hz' type='number' step='1' value='" + String(cp.steer_in_lp_hz) + "'>";
+  s += "<label for='steer_out_lp_hz'>steer_out_lp_hz</label><input class='val8' id='steer_out_lp_hz' name='steer_out_lp_hz' type='number' step='1' value='" + String(cp.steer_out_lp_hz) + "'>";
 
   s += "</div>";
 
@@ -296,22 +277,18 @@ static void handleSettings() {
 }
 
 static void handleSettingsSet() {
-  gain_main = getArgFloat("gain_main", gain_main);
-  gyro_avg = getArgInt("gyro_avg", gyro_avg);
-  deriv_yaw_window = getArgInt("deriv_yaw_window", deriv_yaw_window);
-  deriv_steer_window = getArgInt("deriv_steer_window", deriv_steer_window);
-  steer_prio = getArgFloat("steer_prio", steer_prio);
-  //gyro_dp = getArgFloat("gyro_dp", gyro_dp);
-  vpid_p = getArgFloat("pid_p", vpid_p);
-  vpid_d = getArgFloat("pid_d", vpid_d);
-  return_damping = getArgInt("return_damping", return_damping);
-  gain_exp = getArgFloat("gain_exp", gain_exp);
-  gyro_lp_hz = getArgInt("gyro_lp_hz", gyro_lp_hz);
-  derivative_lp_hz = getArgInt("derivative_lp_hz", derivative_lp_hz);
-  servo_in_lp_hz = getArgInt("servo_in_lp_hz", servo_in_lp_hz);
-  servo_out_lp_hz = getArgInt("servo_out_lp_hz", servo_out_lp_hz);
-  //Serial.print("gyro_avg="); Serial.print(gyro_avg);
-  //Serial.print("deriv_yaw_window="); Serial.print(deriv_yaw_window);
+  cp.gain = getArgFloat("gain", cp.gain);
+  cp.gyro_avg = getArgInt("gyro_avg", cp.gyro_avg);
+  cp.debug_serial = getArgInt("debug_serial", cp.debug_serial);
+  cp.steering_prio = getArgFloat("steering_prio", cp.steering_prio);
+  cp.pid_p = getArgFloat("pid_p", cp.pid_p);
+  cp.pid_d = getArgFloat("pid_d", cp.pid_d);
+  cp.correction_exp = getArgFloat("correction_exp", cp.correction_exp);
+  cp.gyro_lp_hz = getArgInt("gyro_lp_hz", cp.gyro_lp_hz);
+  cp.derivative_lp_hz = getArgInt("derivative_lp_hz", cp.derivative_lp_hz);
+  cp.steer_in_lp_hz = getArgInt("steer_in_lp_hz", cp.steer_in_lp_hz);
+  cp.steer_out_lp_hz = getArgInt("steer_out_lp_hz", cp.steer_out_lp_hz);
+  //Serial.print("cp.gyro_avg="); Serial.print(cp.gyro_avg);
 
   saveParameters();
 
