@@ -153,12 +153,15 @@ static void loadSettings_2() {
   cp.steer_out_lp_hz = prefs_2.getInt("s_out_lp", 20);
   cp.pid_p = prefs_2.getFloat("pid_p", 5.0);
   cp.pid_d = prefs_2.getFloat("pid_d", 1.0);
+  cp.wobble_det_a = prefs_2.getFloat("wobble_det_a", 0.2);
 
   // Apply filter cutoffs
   gyro_lp.setCutoff(cp.gyro_lp_hz);
   derivative_lp.setCutoff(cp.derivative_lp_hz);
   servoin_lp.setCutoff(cp.steer_in_lp_hz);
   servoout_lp.setCutoff(cp.steer_out_lp_hz);
+
+  wob.setAmplitude(cp.wobble_det_a);
 
   prefs_2.end();
 }

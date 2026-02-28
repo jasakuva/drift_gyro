@@ -30,9 +30,13 @@ public:
     wobbling = false;
   }
 
+  void setAmplitude(float wobble_amplitude) {
+    wobble_trigger_amplitude = wobble_amplitude;
+  }
+
   // Call each loop with yawRateError (setpoint - measured)
   void update(float e) {
-    int s = signWithDeadband(e, 0.1f); // ignore tiny sign flips near zero
+    int s = signWithDeadband(e, wobble_trigger_amplitude); // ignore tiny sign flips near zero
 
     sumAbs += fabsf(e);
 
@@ -79,6 +83,7 @@ private:
   int zc = 0;
   int prevSign = 0;
   int onCount = 0, offCount = 0;
+  float wobble_trigger_amplitude = 0.1;
 
   static int signWithDeadband(float x, float db) {
     if (x >  db) return  1;

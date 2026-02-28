@@ -127,6 +127,7 @@ static void loadSettings() {
   cp.steer_out_lp_hz = prefs.getInt("s_out_lp", 20);
   cp.pid_p = prefs.getFloat("pid_p", 5.0);
   cp.pid_d = prefs.getFloat("pid_d", 1.0);
+  cp.wobble_det_a = prefs.getFloat("wobble_det_a", 0.2);
 
   prefs.end();
 
@@ -155,6 +156,7 @@ static void saveParameters() {
   prefs.putInt("s_out_lp", cp.steer_out_lp_hz);
   prefs.putFloat("pid_p", cp.pid_p);
   prefs.putFloat("pid_d", cp.pid_d);
+  prefs.putFloat("wobble_det_a", cp.wobble_det_a);
 
   prefs.end();
 }
@@ -263,6 +265,7 @@ static void handleSettings() {
   s += "<label for='derivative_lp_hz'>derivative_lp_hz</label><input class='val8' id='derivative_lp_hz' name='derivative_lp_hz' type='number' step='1' value='" + String(cp.derivative_lp_hz) + "'>";
   s += "<label for='steer_in_lp_hz'>steer_in_lp_hz</label><input class='val8' id='steer_in_lp_hz' name='steer_in_lp_hz' type='number' step='1' value='" + String(cp.steer_in_lp_hz) + "'>";
   s += "<label for='steer_out_lp_hz'>steer_out_lp_hz</label><input class='val8' id='steer_out_lp_hz' name='steer_out_lp_hz' type='number' step='1' value='" + String(cp.steer_out_lp_hz) + "'>";
+  s += "<label for='wobble_det_a'>wobble_det_amplitude</label><input class='val8' id='wobble_det_a' name='wobble_det_a' type='number' step='0.01' value='" + String(cp.wobble_det_a) + "'>";
 
   s += "</div>";
 
