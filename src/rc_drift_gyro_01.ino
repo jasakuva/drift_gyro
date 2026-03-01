@@ -2,12 +2,19 @@
 #include <ESP32Servo.h>
 #include "DerivativeN.h"
 #include "SteeringMap.h"
-//#include <CodeCell.h>
 #include "settings.h"
 #include <Preferences.h>
 #include <Arduino.h>
 #include "myMovingAverage.h"
 #include "lpfilter.h"
+#include "derivative.h"
+#include "medianfilter.h"
+#include "ControlParams.h"
+#include "WobbleDetectorZC.h"
+#include "AdaptiveGains.h"
+
+WobbleDetectorZC wob;
+AdaptiveGains ag;
 
 #include <Wire.h>
 #include <Adafruit_BNO08x.h>
@@ -16,37 +23,38 @@
 #define SCL_PIN 9
 
 const unsigned long LOOP_PERIOD_US = 2500;  // 2.5 ms
+const float LOOP_PERIOD_MS = LOOP_PERIOD_US / 1000.0f;
+const float LOOP_PERIOD_S = LOOP_PERIOD_MS / 1000.0f;
 unsigned long nextLoopTime;
 
 portMUX_TYPE s_mux = portMUX_INITIALIZER_UNLOCKED;
 
 #define BUFFER_SIZE 30
 
+ControlParams cp;
+
 float Roll;
 float Pitch;
 float Yaw;
+float PrewYaw;
 volatile float yawRate_dps;
 
 float lastGyroCorrection;
 
 Preferences prefs_2;
 
-//CodeCell myCodeCell;
 Adafruit_BNO08x bno08x;
 
 Servo steerServo;
-lpfilter gyro_lp(20.0, 0.0025);
-lpfilter derivative_lp(20.0, 0.0025);
-lpfilter servoin_lp(20.0, 0.0025);
-lpfilter servoout_lp(20.0, 0.0025);
+lpfilter gyro_lp(20.0, LOOP_PERIOD_S);
+lpfilter derivative_lp(20.0, LOOP_PERIOD_S);
+lpfilter servoin_lp(20.0, LOOP_PERIOD_S);
+lpfilter servoout_lp(20.0, LOOP_PERIOD_S);
+lpfilter corr_return_lp(5.0, LOOP_PERIOD_S);
+lpfilter correction_long_lp(0.2, LOOP_PERIOD_S);
 
-
-DerivativeN dYawRate(20);
-DerivativeN dSteering(10);
-DerivativeN dOutput_long(50);
-myMovingAverage<50> norm_output_avg;
-
-float gz_offset;
+derivative dYawRate(LOOP_PERIOD_S);
+derivative dSteering(LOOP_PERIOD_S);
 
 // ---- Pins ----
 const uint8_t PIN_STEER_IN = 5;   // INT0
@@ -63,22 +71,9 @@ int epa_center_us_2 = 1500;
 int epa_high_us_2  = 1900;
 
 
-float gain_main_2;
-int gyro_avg_2;
-int deriv_yaw_window_2;
-int deriv_steer_window_2;
-float steer_prio_2;
-float gyro_dp_2;
-int debug_serial_2=0;
-int return_damping_2=5;
-float gain_exp_2=1;
-int gyro_lp_hz_2=20;
-int derivative_lp_hz_2=20;
-int servo_in_lp_hz_2=20;
-int servo_out_lp_hz_2=20;
+// Parameters are stored in ControlParams cp
 
 int to_settings_counter;
-
 
 SteeringMap mySteeringMap(1000,2000,1500);
 
@@ -108,13 +103,28 @@ void IRAM_ATTR isrSteer() {
   }
 }
 
-void isrGain() {
-  if (digitalRead(PIN_GAIN_IN)) g_rise = micros();
-  else {
+void IRAM_ATTR isrGain() {
+  if (digitalRead(PIN_GAIN_IN)) {
+    portENTER_CRITICAL_ISR(&s_mux);
+    g_rise = micros();
+    portEXIT_CRITICAL_ISR(&s_mux);
+  } else {
     uint32_t w = micros() - g_rise;
-    if (w >= 800 && w <= 2200) g_pw = (uint16_t)w;
+    if (w >= 800 && w <= 2200) {
+      portENTER_CRITICAL_ISR(&s_mux);
+      g_pw = (uint16_t)w;
+      portEXIT_CRITICAL_ISR(&s_mux);
+    }
   }
 }
+
+//void isrGain() {
+//  if (digitalRead(PIN_GAIN_IN)) g_rise = micros();
+//  else {
+//    uint32_t w = micros() - g_rise;
+//    if (w >= 800 && w <= 2200) g_pw = (uint16_t)w;
+//  }
+//}
 
 static inline int16_t clamp16(int16_t v, int16_t lo, int16_t hi) {
   if (v < lo) return lo;
@@ -133,29 +143,26 @@ static void loadSettings_2() {
   epa_center_us_2 = prefs_2.getInt("epaC", 1500);
   epa_high_us_2  = prefs_2.getInt("epaH", 1900);
 
-  gain_main_2 = prefs_2.getFloat("gain_main", 1.0);
-  gyro_avg_2  = prefs_2.getInt("gyro_avg", 6);
-  deriv_yaw_window_2 = prefs_2.getInt("d_y_a", 15);
-  deriv_steer_window_2 = prefs_2.getInt("d_y_s", 5);
-  steer_prio_2 = prefs_2.getFloat("s_p", 1.0);
-  gyro_dp_2 = prefs_2.getFloat("g_dp", 0.5);
-  return_damping_2 = prefs_2.getInt("return_damp",5);
-  gain_exp_2 = prefs_2.getFloat("g_exp", 1);
-  gyro_lp_hz_2 = prefs_2.getInt("gyro_lp_hz", 20);
-  derivative_lp_hz_2 = prefs_2.getInt("d_lp_hz", 20);
-  servo_in_lp_hz_2 = prefs_2.getInt("s_in_lp", 20);
-  servo_out_lp_hz_2 = prefs_2.getInt("s_out_lp", 20);
+  cp.gain = prefs_2.getFloat("gain_main", 1.0);
+  cp.gyro_avg  = prefs_2.getInt("gyro_avg", 6);
+  cp.steering_prio = prefs_2.getFloat("s_p", 1.0);
+  cp.correction_exp = prefs_2.getFloat("g_exp", 1.0);
+  cp.gyro_lp_hz = prefs_2.getInt("gyro_lp_hz", 20);
+  cp.derivative_lp_hz = prefs_2.getInt("d_lp_hz", 20);
+  cp.steer_in_lp_hz = prefs_2.getInt("s_in_lp", 20);
+  cp.steer_out_lp_hz = prefs_2.getInt("s_out_lp", 20);
+  cp.pid_p = prefs_2.getFloat("pid_p", 5.0);
+  cp.pid_d = prefs_2.getFloat("pid_d", 1.0);
+  cp.wobble_det_a = prefs_2.getFloat("wobble_det_a", 0.2);
 
-  // set low pass filters
-  gyro_lp.setCutoff(gyro_lp_hz_2);
-  derivative_lp.setCutoff(derivative_lp_hz_2);
-  servoin_lp.setCutoff(servo_in_lp_hz_2);
-  servoout_lp.setCutoff(servo_out_lp_hz_2);
+  // Apply filter cutoffs
+  gyro_lp.setCutoff(cp.gyro_lp_hz);
+  derivative_lp.setCutoff(cp.derivative_lp_hz);
+  servoin_lp.setCutoff(cp.steer_in_lp_hz);
+  servoout_lp.setCutoff(cp.steer_out_lp_hz);
 
-  // set dirivatives
-  dYawRate.setWindow(deriv_yaw_window_2);
-  dSteering.setWindow(deriv_steer_window_2);
-  
+  wob.setAmplitude(cp.wobble_det_a);
+
   prefs_2.end();
 }
 
@@ -164,8 +171,8 @@ void setup() {
 
   loadSettings_2();
 
-  //myCodeCell.Init(MOTION_GYRO);
-  Wire.begin(SDA_PIN, SCL_PIN);   // 👈 Set custom I2C pins
+  
+  Wire.begin(SDA_PIN, SCL_PIN);
   Wire.setClock(400000);   // 400kHz I2C
   delay(50);
   if (!bno08x.begin_I2C()) {
@@ -173,7 +180,7 @@ void setup() {
     while (1);
   }
   Serial.println("BNO085 found");
-  bno08x.enableReport(SH2_GYROSCOPE_UNCALIBRATED, 500);
+  bno08x.enableReport(SH2_GYROSCOPE_CALIBRATED, 2000);
 
   pinMode(PIN_STEER_IN, INPUT);
   pinMode(PIN_GAIN_IN, INPUT);
@@ -183,11 +190,6 @@ void setup() {
   
   steerServo.setTimerWidth(14);
   
-  //for (int us = 1600; us >= 1400; us -= 1) {
-  //  steerServo.writeMicroseconds(us);
-  //  delay(5);
-  //}
-
   attachInterrupt(digitalPinToInterrupt(PIN_STEER_IN), isrSteer, CHANGE);
   attachInterrupt(digitalPinToInterrupt(PIN_GAIN_IN),  isrGain,  CHANGE);
 
@@ -203,15 +205,6 @@ void setup() {
   loadSettings_2();
 
   delay(500);
-
-  //dYawRate.setWindow(deriv_yaw_window_2);
-  //dSteering.setWindow(deriv_steer_window_2);
-
-  //if (calibrateYawAvg(myCodeCell, gz_offset)) {
-  //gz_offset = gz_offset;   // store calibration
-  //} else {
-  //  Serial.println("Yaw calibration failed");
-  //}
 
   nextLoopTime = micros();
   
@@ -244,31 +237,33 @@ void loop() {
   
   // Read RC pulses atomically
   uint16_t steerIn, gainIn;
-  //noInterrupts();
   portENTER_CRITICAL(&s_mux);
   steerIn = s_pw;
-  //steerIn = 1500;
   gainIn  = g_pw;
   portEXIT_CRITICAL(&s_mux);
-  //interrupts();
+  
+  float gain = ((float)gainIn - 1000.0f) / 1000.0f;  // 0..1
+  gain = clamp16((int16_t)(gain * 1000), 0, 1000) / 1000.0f;
 
+  //detect wobbling and reduce gain if wobbling
+  ag.setBaseGain(gain);
+  ag.update(wob.wobbling, LOOP_PERIOD_S);
+  gain = ag.get();
+  
   steerIn = servoin_lp.update(steerIn);
 
-  // Convert steer to signed
-  int16_t steer = (int16_t)steerIn - RC_MID; // -500..+500
-
+  // Convert steer to signed and normalized to -1...0...+1
+  //int16_t steer = (int16_t)steerIn - RC_MID; 
   float normSteering = mySteeringMap.getNormalized(steerIn);
 
-  long time1 = micros() - startTime;
   sh2_SensorValue_t sensorValue;
 
   if (bno08x.getSensorEvent(&sensorValue)) {
-    if (sensorValue.sensorId == SH2_GYROSCOPE_UNCALIBRATED) {
+    if (sensorValue.sensorId == SH2_GYROSCOPE_CALIBRATED) {
       Yaw = sensorValue.un.gyroscope.z;
     }
   }
-  long time2 = micros() - startTime;
-  
+
   long loopTime = micros()-nextLoopTime;
   // Wait until next 5ms boundary
   while ((long)(micros() - nextLoopTime) < 0) {
@@ -276,12 +271,14 @@ void loop() {
   }
   nextLoopTime += LOOP_PERIOD_US;
 
-  float Result_gyro = moving_average_gyro(Yaw * 115.0f, gyro_avg_2);
+  float Result_gyro = moving_average_gyro(Yaw * 57.2958f, cp.gyro_avg);
+
+  float gyrodps = Yaw * 57.2958f;
 
   // go to settings mode if steerin near epa and no yaw rate
-  if ((steerIn < epa_low_us_2+50 || steerIn > epa_high_us_2-50) && abs(Result_gyro) < 3) {
+  if ((steerIn < epa_low_us_2+50 || steerIn > epa_high_us_2-50) && abs(Result_gyro) < 10) {
     to_settings_counter++;
-    if (to_settings_counter > 2000) {
+    if (to_settings_counter > 3*400) {
       makeSettings();
       loadSettings_2();
       to_settings_counter = 0;
@@ -290,38 +287,30 @@ void loop() {
     to_settings_counter = 0;
   }
 
-  yawRate_dps = Result_gyro;
-
-  // Low-pass filter yaw rate to reduce twitch
-  static float yawRateFilt = 0.0f;
-  // yawRateFilt = lpf(yawRateFilt, yawRate_dps, 0.2f); // alpha 0.1..0.3 typical
-  yawRate_dps = gyro_lp.update(yawRate_dps);
-  yawRateFilt = yawRate_dps;
-
-  dYawRate.add(yawRateFilt);
-
-  float filtered_yaw_derivative = derivative_lp.update(dYawRate.get());
-  dSteering.add(normSteering);
-
-  float gain = ((float)gainIn - 1000.0f) / 1000.0f;  // 0..1
-  gain = clamp16((int16_t)(gain * 1000), 0, 1000) / 1000.0f;
-
-  long time3 = micros() - startTime;
+  float yawRateFilt = gyro_lp.update(Result_gyro);
   
-  float gyro_correction = gain_main_2*((1.0f-gyro_dp_2)*(yawRateFilt / 30.0f)*(gain) + (gyro_dp_2)*(filtered_yaw_derivative / 50.0f)*(gain));
+  float filtered_yaw_derivative = derivative_lp.update(dYawRate.update(yawRateFilt));
+ 
+  float gyro_correction = cp.gain * gain * (cp.pid_p*yawRateFilt + cp.pid_d*filtered_yaw_derivative) / 150.0f;
+
+  float corr = gyro_correction / (1.0f + (abs(dSteering.update(normSteering))/2.0f)*cp.steering_prio);
   
-  float corr = gyro_correction / (1.0f + (abs(dSteering.get())/2.0f)*steer_prio_2);
-  if(fabs(corr) < fabs(lastGyroCorrection)) {
-    corr = (corr+static_cast<float>(return_damping_2)*lastGyroCorrection)/static_cast<float>(return_damping_2+1);
-  }
+  //float corr_return = corr_return_lp.update(corr);
+  
+  //if(fabs(corr) < fabs(lastGyroCorrection)) {
+  //  corr = corr_return;
+  //}
   
   if (corr != 0.0f) {
-    corr = (corr > 0.0f ? 1.0f : -1.0f) * powf(fabs(corr), gain_exp_2);
+    corr = (corr > 0.0f ? 1.0f : -1.0f) * powf(fabs(corr), cp.correction_exp);
   } else {
       corr = 0.0f; // avoid powf(0, <=0)
   }
 
-  
+  corr = corr_return_lp.update(corr);
+  correction_long_lp.update(corr);
+
+  wob.update(corr-correction_long_lp.get());
 
   // slow down correction in near center
   //float combined = normSteering + corr;
@@ -333,39 +322,38 @@ void loop() {
   //corr *= scale;
 
   lastGyroCorrection = corr;
-  long time4 = micros() - startTime;
-  dOutput_long.add(normSteering + corr);
-  norm_output_avg.update(normSteering + corr);
-  long time5 = micros() - startTime;
+  
+ 
+  //dOutput_long.add(normSteering + corr);
+  //norm_output_avg.update(normSteering + corr);
+ 
   int16_t out = (int16_t)mySteeringMap.getServoMsValue(normSteering + corr);
   out = clamp16(out, epa_low_us_2, epa_high_us_2);
 
   out = servoout_lp.update(out);
   steerServo.writeMicroseconds(out);
-  long time6 = micros() - startTime;
+ 
   //delay(2);
 
   // Debug
   static uint32_t lastPrint = 0;
-  //if (millis() - lastPrint > 200 && debug_serial_2 == 1) {
-  if (millis() - lastPrint > 200) {  
+  if (millis() - lastPrint > 200 && cp.debug_serial == 1) {
+  //if (millis() - lastPrint > 200) {  
     lastPrint = millis();
-    //Serial.print("corr="); Serial.print(corr);
-    //Serial.print("Result_gyro="); Serial.print(Result_gyro);
-    //Serial.print("gyro_correction="); Serial.print(gyro_correction);
-    //Serial.print("yawRateFilt="); Serial.print(yawRateFilt);
+    Serial.print("corr="); Serial.print(corr);
+    Serial.print("Result_gyro="); Serial.print(gyrodps);
+    Serial.print("gyro_correction="); Serial.print(gyro_correction);
+    Serial.print("yawRateFilt="); Serial.print(yawRateFilt);
     //Serial.print("dYawRate.get()="); Serial.print(dYawRate.get());
-    //Serial.print("normSteering="); Serial.print(normSteering);
-    //Serial.print(" yaw(dps)="); Serial.print(yawRateFilt);
-    //Serial.print(" gain="); Serial.print(gain);
-    //Serial.print(" steerIn="); Serial.print(steerIn);
-    //Serial.print(" out="); Serial.println(out);
-    //Serial.print(" looptime="); Serial.println(loopTime);
-    Serial.print(" 1="); Serial.print(time1);
-    Serial.print(" 2="); Serial.print(time2);
-    Serial.print(" 3="); Serial.print(time3);
-    Serial.print(" 4="); Serial.print(time4);
-    Serial.print(" 5="); Serial.print(time5);
-    Serial.print(" 6="); Serial.println(time6);
+    Serial.print("normSteering="); Serial.print(normSteering);
+    Serial.print(" yaw(dps)="); Serial.print(yawRateFilt);
+    Serial.print(" gain="); Serial.print(gain);
+    Serial.print(" steerIn="); Serial.print(steerIn);
+    Serial.print(" out="); Serial.print(out);
+    Serial.print(" filtered_yaw_derivative="); Serial.print(filtered_yaw_derivative);
+    
+    Serial.print(" looptime="); Serial.println(loopTime);
+
+    
   }
 }
