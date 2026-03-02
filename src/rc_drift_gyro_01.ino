@@ -12,6 +12,7 @@
 #include "ControlParams.h"
 #include "WobbleDetectorZC.h"
 #include "AdaptiveGains.h"
+#include "DriftDetector.h"
 
 WobbleDetectorZC wob;
 AdaptiveGains ag;
@@ -56,6 +57,10 @@ lpfilter correction_long_lp(0.2, LOOP_PERIOD_S);
 derivative dYawRate(LOOP_PERIOD_S);
 derivative dSteering(LOOP_PERIOD_S);
 
+myMovingAverage<10> drift_value_avg; 
+
+DriftDetector driftd(LOOP_PERIOD_S, 0.05f, 10.0f);
+
 // ---- Pins ----
 const uint8_t PIN_STEER_IN = 5;   // INT0
 const uint8_t PIN_GAIN_IN  = 3;   // INT1 (optional)
@@ -79,12 +84,14 @@ SteeringMap mySteeringMap(1000,2000,1500);
 
 // ---- ISR pulse capture ----
 volatile uint32_t s_rise = 0, g_rise = 0;
-volatile uint16_t s_pw = RC_MID, g_pw = RC_MID;
+volatile uint16_t s_pw = 1700, g_pw = RC_MID;
 
 float buffer_gyro[BUFFER_SIZE] = {0};
 float sum_gyro = 0.0f;
 int bufIndex_gyro = 0;
 int count_gyro = 0;
+
+float off_drift_damper;
 
 
 
@@ -162,6 +169,8 @@ static void loadSettings_2() {
   servoout_lp.setCutoff(cp.steer_out_lp_hz);
 
   wob.setAmplitude(cp.wobble_det_a);
+
+  driftd.init(LOOP_PERIOD_S, cp.dd_min_steer, cp.dd_min_yaw);
 
   prefs_2.end();
 }
@@ -246,9 +255,9 @@ void loop() {
   gain = clamp16((int16_t)(gain * 1000), 0, 1000) / 1000.0f;
 
   //detect wobbling and reduce gain if wobbling
-  ag.setBaseGain(gain);
-  ag.update(wob.wobbling, LOOP_PERIOD_S);
-  gain = ag.get();
+  //ag.setBaseGain(gain);
+  //ag.update(wob.wobbling, LOOP_PERIOD_S);
+  //gain = ag.get();
   
   steerIn = servoin_lp.update(steerIn);
 
@@ -310,7 +319,7 @@ void loop() {
   corr = corr_return_lp.update(corr);
   correction_long_lp.update(corr);
 
-  wob.update(corr-correction_long_lp.get());
+  //wob.update(corr-correction_long_lp.get());
 
   // slow down correction in near center
   //float combined = normSteering + corr;
@@ -321,9 +330,25 @@ void loop() {
   //if (scale > 1.0f ) scale = 1.0f;       // clamp to max 1
   //corr *= scale;
 
+
+  float drift_value;
+  if(cp.gain > 0) {
+    drift_value = driftd.update(normSteering, 0-yawRateFilt);
+  } else {
+    drift_value = driftd.update(normSteering, yawRateFilt);
+  }
+
+  //drift_value_avg.update(drift_value)
+  //
+  //if(drift_value > 0.6f && ) {
+  //  
+  //} else {
+  //  off_drift_damper 
+  //}
+
+  
   lastGyroCorrection = corr;
   
- 
   //dOutput_long.add(normSteering + corr);
   //norm_output_avg.update(normSteering + corr);
  
@@ -351,6 +376,7 @@ void loop() {
     Serial.print(" steerIn="); Serial.print(steerIn);
     Serial.print(" out="); Serial.print(out);
     Serial.print(" filtered_yaw_derivative="); Serial.print(filtered_yaw_derivative);
+    Serial.print(" drift_value="); Serial.print(drift_value);
     
     Serial.print(" looptime="); Serial.println(loopTime);
 
