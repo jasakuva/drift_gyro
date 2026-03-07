@@ -128,6 +128,7 @@ static void loadSettings() {
   cp.pid_p = prefs.getFloat("pid_p", 5.0);
   cp.pid_d = prefs.getFloat("pid_d", 1.0);
   cp.wobble_det_a = prefs.getFloat("wobble_det_a", 0.2);
+  cp.max_d_corr = prefs.getFloat("max_d_corr", 0.05);
 
   prefs.end();
 
@@ -157,6 +158,7 @@ static void saveParameters() {
   prefs.putFloat("pid_p", cp.pid_p);
   prefs.putFloat("pid_d", cp.pid_d);
   prefs.putFloat("wobble_det_a", cp.wobble_det_a);
+  prefs.putFloat("max_d_corr", cp.max_d_corr);
 
   prefs.end();
 }
@@ -266,6 +268,7 @@ static void handleSettings() {
   s += "<label for='steer_in_lp_hz'>steer_in_lp_hz</label><input class='val8' id='steer_in_lp_hz' name='steer_in_lp_hz' type='number' step='1' value='" + String(cp.steer_in_lp_hz) + "'>";
   s += "<label for='steer_out_lp_hz'>steer_out_lp_hz</label><input class='val8' id='steer_out_lp_hz' name='steer_out_lp_hz' type='number' step='1' value='" + String(cp.steer_out_lp_hz) + "'>";
   s += "<label for='wobble_det_a'>wobble_det_amplitude</label><input class='val8' id='wobble_det_a' name='wobble_det_a' type='number' step='0.01' value='" + String(cp.wobble_det_a) + "'>";
+  s += "<label for='max_d_corr'>max_d_corr</label><input class='val8' id='max_d_corr' name='max_d_corr' type='number' step='0.001' value='" + String(cp.max_d_corr) + "'>";
 
   s += "</div>";
 
@@ -291,6 +294,8 @@ static void handleSettingsSet() {
   cp.derivative_lp_hz = getArgInt("derivative_lp_hz", cp.derivative_lp_hz);
   cp.steer_in_lp_hz = getArgInt("steer_in_lp_hz", cp.steer_in_lp_hz);
   cp.steer_out_lp_hz = getArgInt("steer_out_lp_hz", cp.steer_out_lp_hz);
+  cp.wobble_det_a = getArgFloat("wobble_det_a", cp.wobble_det_a);
+  cp.max_d_corr = getArgFloat("max_d_corr", cp.max_d_corr);
   //Serial.print("cp.gyro_avg="); Serial.print(cp.gyro_avg);
 
   saveParameters();
