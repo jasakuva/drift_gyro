@@ -28,10 +28,16 @@ const uint8_t PIN_STEER_IN  = D0;
 const uint8_t PIN_GAIN_IN   = D1;
 const uint8_t PIN_SERVO_OUT = D3;
 
+<<<<<<< Updated upstream
 const unsigned long LOOP_PERIOD_US = 5000;   // 5 ms = 200 Hz
+=======
+const unsigned long LOOP_PERIOD_US = 2500;   // 5 ms = 200 Hz
+>>>>>>> Stashed changes
 const float LOOP_PERIOD_MS = LOOP_PERIOD_US / 1000.0f;
 const float LOOP_PERIOD_S  = LOOP_PERIOD_MS / 1000.0f;
 unsigned long nextLoopTime;
+uint32_t nextLoopTimeUs = 0;
+float dt_s = LOOP_PERIOD_US * 1e-6f;
 
 portMUX_TYPE s_mux = portMUX_INITIALIZER_UNLOCKED;
 
@@ -43,7 +49,7 @@ float Roll;
 float Pitch;
 float Yaw;
 float PrewYaw;
-volatile float yawRate_dps;
+float yawRate_dps;
 float corr;
 float gyrodps;
 float gyro_correction;
@@ -166,6 +172,10 @@ static void loadSettings_2() {
   servoin_lp.setCutoff(cp.steer_in_lp_hz);
   servoout_lp.setCutoff(cp.steer_out_lp_hz);
 
+<<<<<<< Updated upstream
+=======
+
+>>>>>>> Stashed changes
   wob.setAmplitude(cp.wobble_det_a);
   driftd.init(LOOP_PERIOD_S, cp.dd_min_steer, cp.dd_min_yaw);
 
@@ -236,7 +246,12 @@ void setup() {
   loadSettings_2();
 
   delay(500);
+<<<<<<< Updated upstream
   nextLoopTime = micros();
+=======
+  
+  nextLoopTimeUs = micros() + LOOP_PERIOD_US;
+>>>>>>> Stashed changes
 }
 
 float moving_average_gyro(float new_value, int avg_size) {
@@ -259,6 +274,37 @@ float moving_average_gyro(float new_value, int avg_size) {
 }
 
 void loop() {
+<<<<<<< Updated upstream
+=======
+  uint32_t now = micros();
+
+  // Wait until scheduled time
+  if ((int32_t)(now - nextLoopTimeUs) < 0) {
+    return;
+  }
+
+  // Measure actual dt from schedule, not from random loop speed
+  static uint32_t prevStartUs = 0;
+  uint32_t loopStartUs = now;
+
+  if (prevStartUs == 0) {
+    dt_s = LOOP_PERIOD_US * 1e-6f;
+  } else {
+    dt_s = (loopStartUs - prevStartUs) * 1e-6f;
+  }
+  prevStartUs = loopStartUs;
+
+  // Advance schedule by exactly one period
+  nextLoopTimeUs += LOOP_PERIOD_US;
+
+  // Recover if loop overruns badly
+  // Prevents "spiral of death" if something blocks too long
+  if ((int32_t)(now - nextLoopTimeUs) > (int32_t)(4 * LOOP_PERIOD_US)) {
+    nextLoopTimeUs = now + LOOP_PERIOD_US;
+  }
+
+  
+>>>>>>> Stashed changes
   // Read RC pulses atomically
   uint16_t steerIn, gainIn;
   portENTER_CRITICAL(&s_mux);
@@ -270,6 +316,7 @@ void loop() {
   gain = clamp16((int16_t)(gain * 1000), 0, 1000) / 1000.0f;
 
   steerIn = servoin_lp.update(steerIn);
+<<<<<<< Updated upstream
   float normSteering = mySteeringMap.getNormalized(steerIn);
 
   // Read latest MPU6050 data
@@ -282,12 +329,27 @@ void loop() {
 
   // Go to settings mode if steer near EPA and no yaw rate
   if ((steerIn < epa_low_us_2 + 50 || steerIn > epa_high_us_2 - 50) && abs(gyrodps) < 10) {
+=======
+  //float normSteering = mySteeringMap.getNormalized(steerIn);
+
+  // Read latest MPU6050 data
+  sensors_event_t a, g, t;
+  mpu.getEvent(&a, &g, &t);
+
+  // Z gyro in deg/s
+  gyrodps = (g.gyro.z * 57.2957795f) - gyroZOffset_dps;
+  Yaw = gyrodps;
+
+  // Go to settings mode if steer near EPA and no yaw rate
+  if ((steerIn < epa_low_us_2 + 50 || steerIn > epa_high_us_2 - 50) && fabs(gyrodps) < 10) {
+>>>>>>> Stashed changes
     to_settings_counter++;
     if (to_settings_counter > 3.0f * (1.0f / LOOP_PERIOD_S)) {
       makeSettings();
       loadSettings_2();
       to_settings_counter = 0;
     }
+<<<<<<< Updated upstream
   } else {
     to_settings_counter = 0;
   }
@@ -320,16 +382,56 @@ void loop() {
 
   if (cp.gain > 0) {
     drift_value = driftd.update(normSteering, 0 - yawRateFilt);
+=======
+>>>>>>> Stashed changes
   } else {
-    drift_value = driftd.update(normSteering, yawRateFilt);
+    to_settings_counter = 0;
   }
 
+<<<<<<< Updated upstream
   int16_t out = (int16_t)mySteeringMap.getServoMsValue(normSteering + corr);
+=======
+  yawRateFilt = gyro_lp.update(gyrodps);
+  filtered_yaw_derivative = derivative_lp.update(dYawRate.update(yawRateFilt,LOOP_PERIOD_MS));
+
+  // PID
+  gyro_correction = cp.gain * gain * (cp.pid_p * yawRateFilt + cp.pid_d * filtered_yaw_derivative);
+
+  corr = gyro_correction;
+
+  //corr = gyro_correction /
+  //       (1.0f + (abs(dSteering.update(normSteering)) / 2.0f) * cp.steering_prio);
+
+  if (corr != 0.0f) {
+    corr = (corr > 0.0f ? 1.0f : -1.0f) * powf(fabs(corr), cp.correction_exp);
+  } else {
+    corr = 0.0f;
+  }
+
+  //corr = corr_return_lp.update(corr);
+  //correction_long_lp.update(corr);
+
+  float delta = corr - lastGyroCorrection;
+  if (fabs(delta) > cp.max_d_corr) {
+    corr = lastGyroCorrection + (delta > 0 ? cp.max_d_corr : -cp.max_d_corr);
+  }
+
+  lastGyroCorrection = corr;
+
+  //if (cp.gain > 0) {
+  //  drift_value = driftd.update(normSteering, 0 - yawRateFilt);
+  //} else {
+  //  drift_value = driftd.update(normSteering, yawRateFilt);
+  //}
+
+  int16_t out = steerIn + (int16_t)corr;
+>>>>>>> Stashed changes
   out = clamp16(out, epa_low_us_2, epa_high_us_2);
 
   out = servoout_lp.update(out);
   steerServo.writeMicroseconds(out);
 
+<<<<<<< Updated upstream
   long loopTime = micros() - nextLoopTime;
 
   while ((long)(micros() - nextLoopTime) < 0) {
@@ -339,16 +441,32 @@ void loop() {
 
   static uint32_t lastPrint = 0;
   if (millis() - lastPrint > 200 && cp.debug_serial == 1) {
+=======
+  
+
+  static uint32_t lastPrint = 0;
+  //if (millis() - lastPrint > 200 && cp.debug_serial == 1) {
+  if (millis() - lastPrint > 200) {
+>>>>>>> Stashed changes
     lastPrint = millis();
     Serial.print("corr="); Serial.print(corr);
     Serial.print(" Result_gyro="); Serial.print(gyrodps);
     Serial.print(" gyro_correction="); Serial.print(gyro_correction);
     Serial.print(" yawRateFilt="); Serial.print(yawRateFilt);
+<<<<<<< Updated upstream
     Serial.print(" normSteering="); Serial.print(normSteering);
     Serial.print(" gain="); Serial.print(gain);
     Serial.print(" steerIn="); Serial.print(steerIn);
     Serial.print(" out="); Serial.print(out);
     Serial.print(" filtered_yaw_derivative="); Serial.print(filtered_yaw_derivative);
     Serial.print(" loopTime="); Serial.println(loopTime);
+=======
+    //Serial.print(" normSteering="); Serial.print(normSteering);
+    Serial.print(" gain="); Serial.print(gain);
+    Serial.print(" steerIn="); Serial.print(steerIn);
+    Serial.print(" out="); Serial.print(out);
+    Serial.print(" filtered_yaw_derivative="); Serial.println(filtered_yaw_derivative);
+    //Serial.print(" loopTime="); Serial.println(loopTime);
+>>>>>>> Stashed changes
   }
 }

@@ -19,7 +19,7 @@ float derivative::update(float data) {
   return derivativeValue;
 }
 
-float derivative::update(float data, unsigned long dt) {
+float derivative::update(float data, float dt) {
   if (firstRun) {
     lastInput = data;
     firstRun = false;
