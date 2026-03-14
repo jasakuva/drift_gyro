@@ -13,6 +13,11 @@
 #include "AdaptiveGains.h"
 #include "DriftDetector.h"
 
+//#include <WiFi.h>
+//#include <esp_wifi.h>
+//#include <WebServer.h>
+//#include <WebSocketsServer.h>
+
 WobbleDetectorZC wob;
 AdaptiveGains ag;
 
@@ -28,11 +33,7 @@ const uint8_t PIN_STEER_IN  = D0;
 const uint8_t PIN_GAIN_IN   = D1;
 const uint8_t PIN_SERVO_OUT = D3;
 
-<<<<<<< Updated upstream
-const unsigned long LOOP_PERIOD_US = 5000;   // 5 ms = 200 Hz
-=======
 const unsigned long LOOP_PERIOD_US = 2500;   // 5 ms = 200 Hz
->>>>>>> Stashed changes
 const float LOOP_PERIOD_MS = LOOP_PERIOD_US / 1000.0f;
 const float LOOP_PERIOD_S  = LOOP_PERIOD_MS / 1000.0f;
 unsigned long nextLoopTime;
@@ -40,6 +41,12 @@ uint32_t nextLoopTimeUs = 0;
 float dt_s = LOOP_PERIOD_US * 1e-6f;
 
 portMUX_TYPE s_mux = portMUX_INITIALIZER_UNLOCKED;
+
+portMUX_TYPE cp_mux = portMUX_INITIALIZER_UNLOCKED;
+
+TaskHandle_t controlTaskHandle = nullptr;
+TaskHandle_t wifiTaskHandle = nullptr;
+hw_timer_t* controlTimer = nullptr;
 
 #define BUFFER_SIZE 30
 
@@ -62,6 +69,9 @@ Preferences prefs_2;
 
 Adafruit_MPU6050 mpu;
 
+//WebServer server2(80);
+//WebSocketsServer ws2(81);   // WebSocket on port 81
+
 Servo steerServo;
 lpfilter gyro_lp(20.0, LOOP_PERIOD_S);
 lpfilter derivative_lp(20.0, LOOP_PERIOD_S);
@@ -70,8 +80,8 @@ lpfilter servoout_lp(20.0, LOOP_PERIOD_S);
 lpfilter corr_return_lp(5.0, LOOP_PERIOD_S);
 lpfilter correction_long_lp(0.2, LOOP_PERIOD_S);
 
-derivative dYawRate(LOOP_PERIOD_S);
-derivative dSteering(LOOP_PERIOD_S);
+derivative dYawRate(LOOP_PERIOD_MS);
+derivative dSteering(LOOP_PERIOD_MS);
 
 myMovingAverage<10> drift_value_avg;
 
@@ -94,7 +104,9 @@ SteeringMap mySteeringMap(1000, 2000, 1500);
 
 // ---- ISR pulse capture ----
 volatile uint32_t s_rise = 0, g_rise = 0;
-volatile uint16_t s_pw   = 1700, g_pw = RC_MID;
+volatile uint16_t s_pw   = 1500, g_pw = RC_MID;
+
+bool settings_changed = false;
 
 float buffer_gyro[BUFFER_SIZE] = {0};
 float sum_gyro = 0.0f;
@@ -137,6 +149,14 @@ void IRAM_ATTR isrGain() {
   }
 }
 
+void IRAM_ATTR onControlTimer() {
+  BaseType_t xHigherPriorityTaskWoken = pdFALSE;
+  vTaskNotifyGiveFromISR(controlTaskHandle, &xHigherPriorityTaskWoken);
+  if (xHigherPriorityTaskWoken) {
+    portYIELD_FROM_ISR();
+  }
+}
+
 static inline int16_t clamp16(int16_t v, int16_t lo, int16_t hi) {
   if (v < lo) return lo;
   if (v > hi) return hi;
@@ -172,10 +192,7 @@ static void loadSettings_2() {
   servoin_lp.setCutoff(cp.steer_in_lp_hz);
   servoout_lp.setCutoff(cp.steer_out_lp_hz);
 
-<<<<<<< Updated upstream
-=======
 
->>>>>>> Stashed changes
   wob.setAmplitude(cp.wobble_det_a);
   driftd.init(LOOP_PERIOD_S, cp.dd_min_steer, cp.dd_min_yaw);
 
@@ -202,6 +219,15 @@ static void calibrateGyroOffset() {
   Serial.println(gyroZOffset_dps);
 }
 
+void reloadSettings() {
+  gyro_lp.setCutoff(cp.gyro_lp_hz);
+  derivative_lp.setCutoff(cp.derivative_lp_hz);
+  servoin_lp.setCutoff(cp.steer_in_lp_hz);
+  servoout_lp.setCutoff(cp.steer_out_lp_hz);
+  wob.setAmplitude(cp.wobble_det_a);
+  driftd.init(LOOP_PERIOD_S, cp.dd_min_steer, cp.dd_min_yaw);
+}
+
 void setup() {
   Serial.begin(115200);
 
@@ -222,8 +248,8 @@ void setup() {
 
   // Good starting point for RC drift gyro
   mpu.setAccelerometerRange(MPU6050_RANGE_8_G);
-  mpu.setGyroRange(MPU6050_RANGE_500_DEG);
-  mpu.setFilterBandwidth(MPU6050_BAND_21_HZ);
+  mpu.setGyroRange(MPU6050_RANGE_1000_DEG);
+  mpu.setFilterBandwidth(MPU6050_BAND_94_HZ);
 
   calibrateGyroOffset();
 
@@ -246,227 +272,193 @@ void setup() {
   loadSettings_2();
 
   delay(500);
-<<<<<<< Updated upstream
-  nextLoopTime = micros();
-=======
   
   nextLoopTimeUs = micros() + LOOP_PERIOD_US;
->>>>>>> Stashed changes
+
+   // Create control task on core 1
+  xTaskCreatePinnedToCore(
+    controlTask,         // task function
+    "controlTask",       // name
+    8192,                // stack size
+    nullptr,             // parameter
+    3,                   // priority
+    &controlTaskHandle,  // handle
+    1                    // core
+  );
+
+  
+
+  // Create hardware timer
+  xTaskCreatePinnedToCore(
+    wifiTask,
+    "wifiTask",
+    8192,
+    nullptr,
+    4,
+    &wifiTaskHandle,
+    0
+  );
+
+  controlTimer = timerBegin(1000000);   // 1 MHz timer tick = 1 us
+  timerAttachInterrupt(controlTimer, &onControlTimer);
+  timerAlarm(controlTimer, LOOP_PERIOD_US, true, 0);   // auto-reload, unlimited
+
 }
 
-float moving_average_gyro(float new_value, int avg_size) {
-  buffer_gyro[bufIndex_gyro] = new_value;
-  bufIndex_gyro = (bufIndex_gyro + 1) % BUFFER_SIZE;
+//void handleRoot() {
+//  server2.send(200, "text/plain", "ESP32 drift gyro running");
+//}
 
-  if (count_gyro < BUFFER_SIZE) {
-    count_gyro++;
+void wifiTask(void* pvParameters) {
+
+  //WiFi.mode(WIFI_AP);
+  //bool ok = WiFi.softAP("JASAGYRO", "12345678");
+
+  //WiFi.begin("YOUR_SSID", "YOUR_PASSWORD");
+  //while (WiFi.status() != WL_CONNECTED) {
+  //  vTaskDelay(pdMS_TO_TICKS(500));
+  //}
+
+  //server2.on("/", handleRoot);
+  //server2.begin();
+  setupSettings();
+
+  for (;;) {
+    //server2.handleClient();
+
+    makeSettings();
+
+    vTaskDelay(pdMS_TO_TICKS(2));
   }
+}
 
-  float sum = 0.0f;
-  int samples = (count_gyro < avg_size) ? count_gyro : avg_size;
 
-  for (int i = 0; i < samples; i++) {
-    int idx = (bufIndex_gyro - 1 - i + BUFFER_SIZE) % BUFFER_SIZE;
-    sum += buffer_gyro[idx];
+void controlTask(void* pvParameters) {
+  uint32_t lastTickUs = micros();
+
+  for (;;) {
+    // Wait until timer ISR wakes this task
+    ulTaskNotifyTake(pdTRUE, portMAX_DELAY);
+
+    if (settings_changed) {
+      reloadSettings();
+      settings_changed = false;
+    }
+
+    uint32_t nowUs = micros();
+    float dt_s = (nowUs - lastTickUs) * 1e-6f;
+    lastTickUs = nowUs;
+  
+    ControlParams cp_local;
+
+    portENTER_CRITICAL(&cp_mux);
+    cp_local = cp;
+    portEXIT_CRITICAL(&cp_mux);
+    
+    uint32_t now = micros();
+
+    // Wait until scheduled time
+    //if ((int32_t)(now - nextLoopTimeUs) < 0) {
+    //  return;
+    //}
+
+    // Measure actual dt from schedule, not from random loop speed
+    
+    // Read RC pulses atomically
+    uint16_t steerIn, gainIn;
+    portENTER_CRITICAL(&s_mux);
+    steerIn = s_pw;
+    gainIn  = g_pw;
+    portEXIT_CRITICAL(&s_mux);
+
+    float gain = ((float)gainIn - 1000.0f) / 1000.0f;
+    gain = clamp16((int16_t)(gain * 1000), 0, 1000) / 1000.0f;
+
+    steerIn = servoin_lp.update(steerIn);
+    //float normSteering = mySteeringMap.getNormalized(steerIn);
+
+    // Read latest MPU6050 data
+    sensors_event_t a, g, t;
+    mpu.getEvent(&a, &g, &t);
+
+    // Z gyro in deg/s
+    gyrodps = (g.gyro.z * 57.2957795f) - gyroZOffset_dps;
+    Yaw = gyrodps;
+
+    // Go to settings mode if steer near EPA and no yaw rate
+    if ((steerIn < epa_low_us_2 + 50 || steerIn > epa_high_us_2 - 50) && fabs(gyrodps) < 10) {
+      to_settings_counter++;
+      if (to_settings_counter > 3.0f * (1.0f / LOOP_PERIOD_S)) {
+        makeSettings();
+        loadSettings_2();
+        to_settings_counter = 0;
+      }
+    } else {
+      to_settings_counter = 0;
+    }
+    
+    
+    yawRateFilt = gyro_lp.update(gyrodps);                                  //   P  value
+    float yawDerivativeRaw = dYawRate.update(gyrodps,LOOP_PERIOD_MS);
+    filtered_yaw_derivative = derivative_lp.update(yawDerivativeRaw);       //   D  value
+    
+
+    // PID
+    gyro_correction = cp.gain * gain * (cp.pid_p * yawRateFilt + cp.pid_d * filtered_yaw_derivative);
+
+    corr = gyro_correction;
+
+    //corr = gyro_correction /
+    //       (1.0f + (abs(dSteering.update(normSteering)) / 2.0f) * cp.steering_prio);
+
+    if (corr != 0.0f) {
+      corr = (corr > 0.0f ? 1.0f : -1.0f) * powf(fabs(corr), cp.correction_exp);
+    } else {
+      corr = 0.0f;
+    }
+
+    //corr = corr_return_lp.update(corr);
+    //correction_long_lp.update(corr);
+
+    float delta = corr - lastGyroCorrection;
+    if (fabs(delta) > cp.max_d_corr) {
+      corr = lastGyroCorrection + (delta > 0 ? cp.max_d_corr : -cp.max_d_corr);
+    }
+
+    lastGyroCorrection = corr;
+
+    //if (cp.gain > 0) {
+    //  drift_value = driftd.update(normSteering, 0 - yawRateFilt);
+    //} else {
+    //  drift_value = driftd.update(normSteering, yawRateFilt);
+    //}
+
+    int16_t out = steerIn + (int16_t)corr;
+    out = clamp16(out, epa_low_us_2, epa_high_us_2);
+
+    out = servoout_lp.update(out);
+    steerServo.writeMicroseconds(out);
+
+    
+    // debug printing
+    static uint32_t lastPrint = 0;
+    //if (millis() - lastPrint > 200 && cp.debug_serial == 1) {
+    if ((millis() - lastPrint > 200) && (micros() - s_rise) > 1000000) {
+      lastPrint = millis();
+      Serial.print("corr="); Serial.print(corr);
+      Serial.print(" Result_gyro="); Serial.print(gyrodps);
+      Serial.print(" gyro_correction="); Serial.print(gyro_correction);
+      Serial.print(" yawRateFilt="); Serial.print(yawRateFilt);
+      //Serial.print(" normSteering="); Serial.print(normSteering);
+      Serial.print(" gain="); Serial.print(gain);
+      Serial.print(" steerIn="); Serial.print(steerIn);
+      Serial.print(" out="); Serial.print(out);
+      Serial.print(" filtered_yaw_derivative="); Serial.println(filtered_yaw_derivative);
+      //Serial.print(" loopTime="); Serial.println(loopTime);
+    }
   }
-
-  return sum / samples;
 }
 
 void loop() {
-<<<<<<< Updated upstream
-=======
-  uint32_t now = micros();
-
-  // Wait until scheduled time
-  if ((int32_t)(now - nextLoopTimeUs) < 0) {
-    return;
-  }
-
-  // Measure actual dt from schedule, not from random loop speed
-  static uint32_t prevStartUs = 0;
-  uint32_t loopStartUs = now;
-
-  if (prevStartUs == 0) {
-    dt_s = LOOP_PERIOD_US * 1e-6f;
-  } else {
-    dt_s = (loopStartUs - prevStartUs) * 1e-6f;
-  }
-  prevStartUs = loopStartUs;
-
-  // Advance schedule by exactly one period
-  nextLoopTimeUs += LOOP_PERIOD_US;
-
-  // Recover if loop overruns badly
-  // Prevents "spiral of death" if something blocks too long
-  if ((int32_t)(now - nextLoopTimeUs) > (int32_t)(4 * LOOP_PERIOD_US)) {
-    nextLoopTimeUs = now + LOOP_PERIOD_US;
-  }
-
-  
->>>>>>> Stashed changes
-  // Read RC pulses atomically
-  uint16_t steerIn, gainIn;
-  portENTER_CRITICAL(&s_mux);
-  steerIn = s_pw;
-  gainIn  = g_pw;
-  portEXIT_CRITICAL(&s_mux);
-
-  float gain = ((float)gainIn - 1000.0f) / 1000.0f;
-  gain = clamp16((int16_t)(gain * 1000), 0, 1000) / 1000.0f;
-
-  steerIn = servoin_lp.update(steerIn);
-<<<<<<< Updated upstream
-  float normSteering = mySteeringMap.getNormalized(steerIn);
-
-  // Read latest MPU6050 data
-  sensors_event_t a, g, t;
-  mpu.getEvent(&a, &g, &t);
-
-  // Z gyro in deg/s
-  gyrodps = (g.gyro.z * 57.2957795f) - gyroZOffset_dps;
-  Yaw = gyrodps;
-
-  // Go to settings mode if steer near EPA and no yaw rate
-  if ((steerIn < epa_low_us_2 + 50 || steerIn > epa_high_us_2 - 50) && abs(gyrodps) < 10) {
-=======
-  //float normSteering = mySteeringMap.getNormalized(steerIn);
-
-  // Read latest MPU6050 data
-  sensors_event_t a, g, t;
-  mpu.getEvent(&a, &g, &t);
-
-  // Z gyro in deg/s
-  gyrodps = (g.gyro.z * 57.2957795f) - gyroZOffset_dps;
-  Yaw = gyrodps;
-
-  // Go to settings mode if steer near EPA and no yaw rate
-  if ((steerIn < epa_low_us_2 + 50 || steerIn > epa_high_us_2 - 50) && fabs(gyrodps) < 10) {
->>>>>>> Stashed changes
-    to_settings_counter++;
-    if (to_settings_counter > 3.0f * (1.0f / LOOP_PERIOD_S)) {
-      makeSettings();
-      loadSettings_2();
-      to_settings_counter = 0;
-    }
-<<<<<<< Updated upstream
-  } else {
-    to_settings_counter = 0;
-  }
-
-  yawRateFilt = gyro_lp.update(gyrodps);
-  filtered_yaw_derivative = derivative_lp.update(dYawRate.update(yawRateFilt));
-
-  // PID
-  gyro_correction = cp.gain * gain *
-                    (cp.pid_p * yawRateFilt + cp.pid_d * filtered_yaw_derivative) / 150.0f;
-
-  corr = gyro_correction /
-         (1.0f + (abs(dSteering.update(normSteering)) / 2.0f) * cp.steering_prio);
-
-  if (corr != 0.0f) {
-    corr = (corr > 0.0f ? 1.0f : -1.0f) * powf(fabs(corr), cp.correction_exp);
-  } else {
-    corr = 0.0f;
-  }
-
-  corr = corr_return_lp.update(corr);
-  correction_long_lp.update(corr);
-
-  float delta = corr - lastGyroCorrection;
-  if (fabs(delta) > cp.max_d_corr) {
-    corr = lastGyroCorrection + (delta > 0 ? cp.max_d_corr : -cp.max_d_corr);
-  }
-
-  lastGyroCorrection = corr;
-
-  if (cp.gain > 0) {
-    drift_value = driftd.update(normSteering, 0 - yawRateFilt);
-=======
->>>>>>> Stashed changes
-  } else {
-    to_settings_counter = 0;
-  }
-
-<<<<<<< Updated upstream
-  int16_t out = (int16_t)mySteeringMap.getServoMsValue(normSteering + corr);
-=======
-  yawRateFilt = gyro_lp.update(gyrodps);
-  filtered_yaw_derivative = derivative_lp.update(dYawRate.update(yawRateFilt,LOOP_PERIOD_MS));
-
-  // PID
-  gyro_correction = cp.gain * gain * (cp.pid_p * yawRateFilt + cp.pid_d * filtered_yaw_derivative);
-
-  corr = gyro_correction;
-
-  //corr = gyro_correction /
-  //       (1.0f + (abs(dSteering.update(normSteering)) / 2.0f) * cp.steering_prio);
-
-  if (corr != 0.0f) {
-    corr = (corr > 0.0f ? 1.0f : -1.0f) * powf(fabs(corr), cp.correction_exp);
-  } else {
-    corr = 0.0f;
-  }
-
-  //corr = corr_return_lp.update(corr);
-  //correction_long_lp.update(corr);
-
-  float delta = corr - lastGyroCorrection;
-  if (fabs(delta) > cp.max_d_corr) {
-    corr = lastGyroCorrection + (delta > 0 ? cp.max_d_corr : -cp.max_d_corr);
-  }
-
-  lastGyroCorrection = corr;
-
-  //if (cp.gain > 0) {
-  //  drift_value = driftd.update(normSteering, 0 - yawRateFilt);
-  //} else {
-  //  drift_value = driftd.update(normSteering, yawRateFilt);
-  //}
-
-  int16_t out = steerIn + (int16_t)corr;
->>>>>>> Stashed changes
-  out = clamp16(out, epa_low_us_2, epa_high_us_2);
-
-  out = servoout_lp.update(out);
-  steerServo.writeMicroseconds(out);
-
-<<<<<<< Updated upstream
-  long loopTime = micros() - nextLoopTime;
-
-  while ((long)(micros() - nextLoopTime) < 0) {
-    yield();
-  }
-  nextLoopTime += LOOP_PERIOD_US;
-
-  static uint32_t lastPrint = 0;
-  if (millis() - lastPrint > 200 && cp.debug_serial == 1) {
-=======
-  
-
-  static uint32_t lastPrint = 0;
-  //if (millis() - lastPrint > 200 && cp.debug_serial == 1) {
-  if (millis() - lastPrint > 200) {
->>>>>>> Stashed changes
-    lastPrint = millis();
-    Serial.print("corr="); Serial.print(corr);
-    Serial.print(" Result_gyro="); Serial.print(gyrodps);
-    Serial.print(" gyro_correction="); Serial.print(gyro_correction);
-    Serial.print(" yawRateFilt="); Serial.print(yawRateFilt);
-<<<<<<< Updated upstream
-    Serial.print(" normSteering="); Serial.print(normSteering);
-    Serial.print(" gain="); Serial.print(gain);
-    Serial.print(" steerIn="); Serial.print(steerIn);
-    Serial.print(" out="); Serial.print(out);
-    Serial.print(" filtered_yaw_derivative="); Serial.print(filtered_yaw_derivative);
-    Serial.print(" loopTime="); Serial.println(loopTime);
-=======
-    //Serial.print(" normSteering="); Serial.print(normSteering);
-    Serial.print(" gain="); Serial.print(gain);
-    Serial.print(" steerIn="); Serial.print(steerIn);
-    Serial.print(" out="); Serial.print(out);
-    Serial.print(" filtered_yaw_derivative="); Serial.println(filtered_yaw_derivative);
-    //Serial.print(" loopTime="); Serial.println(loopTime);
->>>>>>> Stashed changes
-  }
+  vTaskDelay(pdMS_TO_TICKS(1000));
 }

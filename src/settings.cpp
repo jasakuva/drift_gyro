@@ -20,6 +20,7 @@ extern volatile uint16_t s_pw;
 extern float yawRate_dps;
 extern portMUX_TYPE s_mux;
 extern Servo steerServo;
+extern bool settings_changed;
 
 Preferences prefs;
 WebServer server(80);
@@ -161,6 +162,8 @@ static void saveParameters() {
   prefs.putFloat("max_d_corr", cp.max_d_corr);
 
   prefs.end();
+
+  settings_changed = true;
 }
 
 // ---------- Pages ----------
@@ -347,12 +350,12 @@ void setupSettings() {
 }
 
 void makeSettings() {
-  setupSettings();
+  //setupSettings();
 
   uint32_t start = millis();
   uint32_t lastPush = 0;
   exitSettings = 0;
-  while (millis() - start < 600000 && exitSettings == 0) {
+  //while (millis() - start < 600000 && exitSettings == 0) {
     server.handleClient();
     ws.loop();
 
@@ -361,15 +364,15 @@ void makeSettings() {
       lastPush = millis();
       String msg = "{\"steer\":" + String(getSteerPwSnapshot()) + "}";
       ws.broadcastTXT(msg);
-      steerServo.writeMicroseconds(getSteerPwSnapshot());
+      //steerServo.writeMicroseconds(getSteerPwSnapshot());
     }
 
     delay(2);
-  }
+  //}
 
-  server.stop();                 // stop HTTP
-  WiFi.softAPdisconnect(true);   // stop AP
-  WiFi.disconnect(true);         // stop STA (if used)
-  WiFi.mode(WIFI_OFF);           // disable Wi-Fi
-  esp_wifi_stop();               // stop driver
+  //server.stop();                 // stop HTTP
+  //WiFi.softAPdisconnect(true);   // stop AP
+  //WiFi.disconnect(true);         // stop STA (if used)
+  //WiFi.mode(WIFI_OFF);           // disable Wi-Fi
+  //esp_wifi_stop();               // stop driver
 }
