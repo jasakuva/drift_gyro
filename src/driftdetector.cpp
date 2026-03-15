@@ -6,19 +6,31 @@ DriftDetector::DriftDetector(float loopTime, float min_steering, float min_yaw)
   init(loopTime, min_steering, min_yaw);
 }
 
-float DriftDetector::update(float steering, float yaw)
+float DriftDetector::update(float steering, float yaw, float gain)
 {
   // avoid division by zero / nonsense loop time
   if (v_loopTime <= 0.0f) return drift_value;
 
-  const bool drifting =
+  //if (cp.gain > 0) {
+    //  drift_value = driftd.update(normSteering, 0 - yawRateFilt);
+    //} else {
+    //  drift_value = driftd.update(normSteering, yawRateFilt);
+    //}
+  bool drifting;
+  if (gain < 0) {
+    drifting =
     ((steering >  v_min_steering && yaw < -v_min_yaw) ||
      (steering < -v_min_steering && yaw >  v_min_yaw));
+  } else {
+    drifting =
+    ((steering >  v_min_steering && 0-yaw < -v_min_yaw) ||
+     (steering < -v_min_steering && 0-yaw >  v_min_yaw));
+  }
 
   if(drifting) {
-    drift_value = drift_value + (0.5f * v_loopTime);
+    drift_value = drift_value + (1.0f * v_loopTime);
   } else {
-    drift_value = drift_value - (2.0f * v_loopTime);
+    drift_value = drift_value - (4.0f * v_loopTime);
   }
   
   drift_value = constrain(drift_value, 0.0f, 1.0f);

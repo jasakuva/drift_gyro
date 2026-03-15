@@ -1,7 +1,7 @@
 class DriftDetector {
   public:
     DriftDetector(float loopTime, float min_steering, float min_yaw);
-    float update(float steering, float yaw);
+    float update(float steering, float yaw, float gain);
     float get();
     void init(float loopTime, float min_steering, float min_yaw);
 

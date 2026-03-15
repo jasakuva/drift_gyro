@@ -104,7 +104,7 @@ SteeringMap mySteeringMap(1000, 2000, 1500);
 
 // ---- ISR pulse capture ----
 volatile uint32_t s_rise = 0, g_rise = 0;
-volatile uint16_t s_pw   = 1500, g_pw = RC_MID;
+volatile uint16_t s_pw   = 1150, g_pw = RC_MID;
 
 bool settings_changed = false;
 
@@ -311,16 +311,7 @@ void setup() {
 
 void wifiTask(void* pvParameters) {
 
-  //WiFi.mode(WIFI_AP);
-  //bool ok = WiFi.softAP("JASAGYRO", "12345678");
-
-  //WiFi.begin("YOUR_SSID", "YOUR_PASSWORD");
-  //while (WiFi.status() != WL_CONNECTED) {
-  //  vTaskDelay(pdMS_TO_TICKS(500));
-  //}
-
-  //server2.on("/", handleRoot);
-  //server2.begin();
+ 
   setupSettings();
 
   for (;;) {
@@ -328,7 +319,7 @@ void wifiTask(void* pvParameters) {
 
     makeSettings();
 
-    vTaskDelay(pdMS_TO_TICKS(2));
+    vTaskDelay(pdMS_TO_TICKS(50));
   }
 }
 
@@ -375,7 +366,7 @@ void controlTask(void* pvParameters) {
     gain = clamp16((int16_t)(gain * 1000), 0, 1000) / 1000.0f;
 
     steerIn = servoin_lp.update(steerIn);
-    //float normSteering = mySteeringMap.getNormalized(steerIn);
+    float normSteering = mySteeringMap.getNormalized(steerIn);
 
     // Read latest MPU6050 data
     sensors_event_t a, g, t;
@@ -385,31 +376,21 @@ void controlTask(void* pvParameters) {
     gyrodps = (g.gyro.z * 57.2957795f) - gyroZOffset_dps;
     Yaw = gyrodps;
 
-    // Go to settings mode if steer near EPA and no yaw rate
-    if ((steerIn < epa_low_us_2 + 50 || steerIn > epa_high_us_2 - 50) && fabs(gyrodps) < 10) {
-      to_settings_counter++;
-      if (to_settings_counter > 3.0f * (1.0f / LOOP_PERIOD_S)) {
-        makeSettings();
-        loadSettings_2();
-        to_settings_counter = 0;
-      }
-    } else {
-      to_settings_counter = 0;
-    }
-    
-    
     yawRateFilt = gyro_lp.update(gyrodps);                                  //   P  value
     float yawDerivativeRaw = dYawRate.update(gyrodps,LOOP_PERIOD_MS);
     filtered_yaw_derivative = derivative_lp.update(yawDerivativeRaw);       //   D  value
     
+    // calculate drift propability
+    drift_value = driftd.update(normSteering, yawRateFilt, cp.gain);
+    float drift_multiplier = 1.0f+(drift_value/15);
 
     // PID
-    gyro_correction = cp.gain * gain * (cp.pid_p * yawRateFilt + cp.pid_d * filtered_yaw_derivative);
+    gyro_correction = drift_value * cp.gain * gain * (cp.pid_p * yawRateFilt + cp.pid_d * filtered_yaw_derivative);
 
     corr = gyro_correction;
 
-    //corr = gyro_correction /
-    //       (1.0f + (abs(dSteering.update(normSteering)) / 2.0f) * cp.steering_prio);
+    corr = gyro_correction /
+           (1.0f + (abs(dSteering.update(normSteering)) / 2.0f) * cp.steering_prio);
 
     if (corr != 0.0f) {
       corr = (corr > 0.0f ? 1.0f : -1.0f) * powf(fabs(corr), cp.correction_exp);
@@ -426,12 +407,7 @@ void controlTask(void* pvParameters) {
     }
 
     lastGyroCorrection = corr;
-
-    //if (cp.gain > 0) {
-    //  drift_value = driftd.update(normSteering, 0 - yawRateFilt);
-    //} else {
-    //  drift_value = driftd.update(normSteering, yawRateFilt);
-    //}
+    
 
     int16_t out = steerIn + (int16_t)corr;
     out = clamp16(out, epa_low_us_2, epa_high_us_2);
@@ -453,6 +429,7 @@ void controlTask(void* pvParameters) {
       Serial.print(" gain="); Serial.print(gain);
       Serial.print(" steerIn="); Serial.print(steerIn);
       Serial.print(" out="); Serial.print(out);
+      Serial.print(" drift_value="); Serial.print(drift_value);
       Serial.print(" filtered_yaw_derivative="); Serial.println(filtered_yaw_derivative);
       //Serial.print(" loopTime="); Serial.println(loopTime);
     }

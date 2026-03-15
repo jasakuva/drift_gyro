@@ -42,7 +42,7 @@ int current_steering_us = 1500;
 
 // ---------- Settings variables (8 parameters) ----------
 
-
+uint32_t lastPush = 0;
 
 int exitSettings = 0;
 
@@ -81,7 +81,7 @@ static uint16_t getSteerPwSnapshot() {
   uint16_t v;
   portENTER_CRITICAL(&s_mux);
   v = s_pw;
-  //v = yawRate_dps;
+  //v = steering pwm;
   portEXIT_CRITICAL(&s_mux);
   return v;
 }
@@ -173,6 +173,7 @@ static void handleRoot() {
   s += "<p>Main page</p>";
   s += "<a href='/epa'>EPA</a><br>";
   s += "<a href='/settings'>Settings</a><br>";
+  s += "<a href='/monitor'>Monitor</a><br>";
   s += "<a href='/exit'>Exit</a><br>";
   s += "</div>";
   s += "<div class='small'>AP IP: " + WiFi.softAPIP().toString() + "</div>";
@@ -200,6 +201,47 @@ static void handleEPA() {
   s += "<p><b>EPA low:</b> " + String(epa_low_us) + " us<br>";
   s += "<b>EPA Center:</b> " + String(epa_center_us) + " us<br>";
   s += "<b>EPA high:</b> " + String(epa_high_us) + " us</p>";
+
+  s += "<a href='/'>Back</a>";
+  s += "</div>";
+
+  s += R"rawliteral(
+<script>
+let ws;
+function connectWS() {
+  ws = new WebSocket(`ws://${location.hostname}:81/`);
+  ws.onmessage = (evt) => {
+    try {
+      const d = JSON.parse(evt.data);
+      if (d.steer !== undefined) document.getElementById('steer').textContent = d.steer;
+    } catch(e) {}
+  };
+  ws.onclose = () => setTimeout(connectWS, 1000);
+}
+connectWS();
+</script>
+)rawliteral";
+
+  s += htmlFooter();
+  server.send(200, "text/html", s);
+}
+
+
+static void handleMonitor() {
+  String msg = server.hasArg("msg") ? server.arg("msg") : "";
+
+  String s = htmlHeader("Monitor");
+  s += "<div class='card'>";
+  s += "<div class='row'>";
+  
+  s += "</div>";
+
+  if (msg.length()) s += "<p><b>Status:</b> " + msg + "</p>";
+
+  // Live value from websocket
+  s += "<p><b>Current steering:</b> <span id='steer'>--</span> us</p>";
+
+  
 
   s += "<a href='/'>Back</a>";
   s += "</div>";
@@ -338,6 +380,7 @@ void setupSettings() {
   server.on("/epa/action", HTTP_POST, handleEPAAction);
   server.on("/settings", HTTP_GET, handleSettings);
   server.on("/settings/set", HTTP_POST, handleSettingsSet);
+  server.on("/monitor", HTTP_GET, handleMonitor);
   server.on("/exit", HTTP_GET, handleExit);
   server.onNotFound(handleNotFound);
 
@@ -353,21 +396,21 @@ void makeSettings() {
   //setupSettings();
 
   uint32_t start = millis();
-  uint32_t lastPush = 0;
+  
   exitSettings = 0;
   //while (millis() - start < 600000 && exitSettings == 0) {
     server.handleClient();
     ws.loop();
 
     // Push ~5 Hz
-    if (millis() - lastPush >= 50) {
+    if (millis() - lastPush >= 500) {
       lastPush = millis();
       String msg = "{\"steer\":" + String(getSteerPwSnapshot()) + "}";
       ws.broadcastTXT(msg);
       //steerServo.writeMicroseconds(getSteerPwSnapshot());
     }
 
-    delay(2);
+    //delay(2);
   //}
 
   //server.stop();                 // stop HTTP
