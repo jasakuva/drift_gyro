@@ -9,6 +9,7 @@
 #include "ControlParams.h"
 
 extern ControlParams cp;   // global instance from main.ino
+extern float drift_value;
 
 // -----------------------
 // Externs from main.ino
@@ -45,6 +46,9 @@ int current_steering_us = 1500;
 uint32_t lastPush = 0;
 
 int exitSettings = 0;
+
+int ws_speedup = 0;
+unsigned long ws_speedup_starttime;
 
 // ---------- Helpers ----------
 static String htmlHeader(const String& title) {
@@ -83,6 +87,12 @@ static uint16_t getSteerPwSnapshot() {
   v = s_pw;
   //v = steering pwm;
   portEXIT_CRITICAL(&s_mux);
+  return v;
+}
+
+static float getDriftValueSnapshot() {
+  float v;
+  v = drift_value;
   return v;
 }
 
@@ -130,6 +140,8 @@ static void loadSettings() {
   cp.pid_d = prefs.getFloat("pid_d", 1.0);
   cp.wobble_det_a = prefs.getFloat("wobble_det_a", 0.2);
   cp.max_d_corr = prefs.getFloat("max_d_corr", 0.05);
+  cp.dd_min_steer = prefs.getFloat("dd_min_steer", 0.05);
+  cp.dd_min_yaw = prefs.getFloat("dd_min_yaw", 15);
 
   prefs.end();
 
@@ -160,6 +172,9 @@ static void saveParameters() {
   prefs.putFloat("pid_d", cp.pid_d);
   prefs.putFloat("wobble_det_a", cp.wobble_det_a);
   prefs.putFloat("max_d_corr", cp.max_d_corr);
+  prefs.putFloat("dd_min_steer", cp.dd_min_steer);
+  prefs.putFloat("dd_min_yaw", cp.dd_min_yaw);
+  prefs.putFloat("dd_multiplier", cp.dd_multiplier);
 
   prefs.end();
 
@@ -228,6 +243,8 @@ connectWS();
 
 
 static void handleMonitor() {
+  ws_speedup = 1;
+  
   String msg = server.hasArg("msg") ? server.arg("msg") : "";
 
   String s = htmlHeader("Monitor");
@@ -240,6 +257,7 @@ static void handleMonitor() {
 
   // Live value from websocket
   s += "<p><b>Current steering:</b> <span id='steer'>--</span> us</p>";
+  s += "<p><b>Current driftvalue:</b> <span id='dd_value'>--</span></p>";
 
   
 
@@ -255,6 +273,7 @@ function connectWS() {
     try {
       const d = JSON.parse(evt.data);
       if (d.steer !== undefined) document.getElementById('steer').textContent = d.steer;
+      if (d.dd_value !== undefined) document.getElementById('dd_value').textContent = d.dd_value;
     } catch(e) {}
   };
   ws.onclose = () => setTimeout(connectWS, 1000);
@@ -314,6 +333,9 @@ static void handleSettings() {
   s += "<label for='steer_out_lp_hz'>steer_out_lp_hz</label><input class='val8' id='steer_out_lp_hz' name='steer_out_lp_hz' type='number' step='1' value='" + String(cp.steer_out_lp_hz) + "'>";
   s += "<label for='wobble_det_a'>wobble_det_amplitude</label><input class='val8' id='wobble_det_a' name='wobble_det_a' type='number' step='0.01' value='" + String(cp.wobble_det_a) + "'>";
   s += "<label for='max_d_corr'>max_d_corr</label><input class='val8' id='max_d_corr' name='max_d_corr' type='number' step='0.001' value='" + String(cp.max_d_corr) + "'>";
+  s += "<label for='dd_min_steer'>dd_min_steer</label><input class='val8' id='dd_min_steer' name='dd_min_steer' type='number' step='0.005' value='" + String(cp.dd_min_steer) + "'>";
+  s += "<label for='dd_min_yaw'>dd_min_yaw</label><input class='val8' id='dd_min_yaw' name='dd_min_yaw' type='number' step='0.5' value='" + String(cp.dd_min_yaw) + "'>";
+  s += "<label for='dd_multiplier'>dd_multiplier</label><input class='val8' id='dd_multiplier' name='dd_multiplier' type='number' step='0.1' value='" + String(cp.dd_multiplier) + "'>";
 
   s += "</div>";
 
@@ -341,6 +363,9 @@ static void handleSettingsSet() {
   cp.steer_out_lp_hz = getArgInt("steer_out_lp_hz", cp.steer_out_lp_hz);
   cp.wobble_det_a = getArgFloat("wobble_det_a", cp.wobble_det_a);
   cp.max_d_corr = getArgFloat("max_d_corr", cp.max_d_corr);
+  cp.dd_min_steer = getArgFloat("dd_min_steer", cp.dd_min_steer);
+  cp.dd_min_yaw = getArgFloat("dd_min_yaw", cp.dd_min_yaw);
+  cp.dd_multiplier = getArgFloat("dd_multiplier", cp.dd_multiplier);
   //Serial.print("cp.gyro_avg="); Serial.print(cp.gyro_avg);
 
   saveParameters();
@@ -396,6 +421,7 @@ void makeSettings() {
   //setupSettings();
 
   uint32_t start = millis();
+  uint32_t interval;
   
   exitSettings = 0;
   //while (millis() - start < 600000 && exitSettings == 0) {
@@ -403,9 +429,20 @@ void makeSettings() {
     ws.loop();
 
     // Push ~5 Hz
-    if (millis() - lastPush >= 500) {
+    if(ws_speedup==1) {
+      ws_speedup_starttime = millis();
+      ws_speedup = 0;
+    }
+    
+    if(ws_speedup_starttime + 60000 > millis()) {
+      interval = 200;
+    } else {
+      interval = 1000;
+    }
+
+    if (millis() - lastPush >= interval) {
       lastPush = millis();
-      String msg = "{\"steer\":" + String(getSteerPwSnapshot()) + "}";
+      String msg = "{\"steer\":" + String(getSteerPwSnapshot()) + ",\"dd_value\":" + String(getDriftValueSnapshot()) + "}";
       ws.broadcastTXT(msg);
       //steerServo.writeMicroseconds(getSteerPwSnapshot());
     }

@@ -63,6 +63,7 @@ float gyro_correction;
 float drift_value;
 float filtered_yaw_derivative;
 
+
 float lastGyroCorrection = 0.0f;
 
 Preferences prefs_2;
@@ -382,10 +383,10 @@ void controlTask(void* pvParameters) {
     
     // calculate drift propability
     drift_value = driftd.update(normSteering, yawRateFilt, cp.gain);
-    float drift_multiplier = 1.0f+(drift_value/15);
+    float drift_multiplier = 1.0f+(drift_value/10)*cp.dd_multiplier;
 
     // PID
-    gyro_correction = drift_value * cp.gain * gain * (cp.pid_p * yawRateFilt + cp.pid_d * filtered_yaw_derivative);
+    gyro_correction = drift_multiplier * cp.gain * gain * (cp.pid_p * yawRateFilt + cp.pid_d * filtered_yaw_derivative);
 
     corr = gyro_correction;
 
