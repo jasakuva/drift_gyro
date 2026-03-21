@@ -19,8 +19,8 @@ float DriftDetector::update(float steering, float yaw, float gain)
   bool drifting;
   if (gain < 0) {
     drifting =
-    ((steering >  v_min_steering && yaw < -v_min_yaw) ||
-     (steering < -v_min_steering && yaw >  v_min_yaw));
+    ((steering >  v_min_steering && yaw < 0-v_min_yaw) ||
+     (steering < 0-v_min_steering && yaw >  v_min_yaw));
   } else {
     drifting =
     ((steering >  v_min_steering && 0-yaw < -v_min_yaw) ||

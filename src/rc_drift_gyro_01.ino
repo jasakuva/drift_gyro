@@ -62,6 +62,7 @@ float gyrodps;
 float gyro_correction;
 float drift_value;
 float filtered_yaw_derivative;
+float normSteering;
 
 
 float lastGyroCorrection = 0.0f;
@@ -105,7 +106,7 @@ SteeringMap mySteeringMap(1000, 2000, 1500);
 
 // ---- ISR pulse capture ----
 volatile uint32_t s_rise = 0, g_rise = 0;
-volatile uint16_t s_pw   = 1150, g_pw = RC_MID;
+volatile uint16_t s_pw   = 1700, g_pw = RC_MID;
 
 bool settings_changed = false;
 
@@ -192,6 +193,7 @@ static void loadSettings_2() {
   derivative_lp.setCutoff(cp.derivative_lp_hz);
   servoin_lp.setCutoff(cp.steer_in_lp_hz);
   servoout_lp.setCutoff(cp.steer_out_lp_hz);
+  mySteeringMap.setEpaValues(epa_low_us_2, epa_high_us_2, epa_center_us_2);
 
 
   wob.setAmplitude(cp.wobble_det_a);
@@ -288,8 +290,6 @@ void setup() {
   );
 
   
-
-  // Create hardware timer
   xTaskCreatePinnedToCore(
     wifiTask,
     "wifiTask",
@@ -315,13 +315,12 @@ void wifiTask(void* pvParameters) {
  
   setupSettings();
 
-  for (;;) {
-    //server2.handleClient();
-
-    makeSettings();
-
+  while (makeSettings()) {
     vTaskDelay(pdMS_TO_TICKS(50));
   }
+
+  wifiTaskHandle = nullptr;
+  vTaskDelete(nullptr);
 }
 
 
@@ -367,7 +366,7 @@ void controlTask(void* pvParameters) {
     gain = clamp16((int16_t)(gain * 1000), 0, 1000) / 1000.0f;
 
     steerIn = servoin_lp.update(steerIn);
-    float normSteering = mySteeringMap.getNormalized(steerIn);
+    normSteering = mySteeringMap.getNormalized(steerIn);
 
     // Read latest MPU6050 data
     sensors_event_t a, g, t;
@@ -420,18 +419,19 @@ void controlTask(void* pvParameters) {
     // debug printing
     static uint32_t lastPrint = 0;
     //if (millis() - lastPrint > 200 && cp.debug_serial == 1) {
-    if ((millis() - lastPrint > 200) && (micros() - s_rise) > 1000000) {
+    if ((millis() - lastPrint > 200) && (micros() - s_rise) > 1000000 && cp.debug_serial == 1) {
       lastPrint = millis();
       Serial.print("corr="); Serial.print(corr);
       Serial.print(" Result_gyro="); Serial.print(gyrodps);
       Serial.print(" gyro_correction="); Serial.print(gyro_correction);
       Serial.print(" yawRateFilt="); Serial.print(yawRateFilt);
-      //Serial.print(" normSteering="); Serial.print(normSteering);
+      Serial.print(" normSteering="); Serial.print(normSteering);
       Serial.print(" gain="); Serial.print(gain);
       Serial.print(" steerIn="); Serial.print(steerIn);
       Serial.print(" out="); Serial.print(out);
       Serial.print(" drift_value="); Serial.print(drift_value);
       Serial.print(" filtered_yaw_derivative="); Serial.println(filtered_yaw_derivative);
+      
       //Serial.print(" loopTime="); Serial.println(loopTime);
     }
   }

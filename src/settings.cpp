@@ -10,6 +10,7 @@
 
 extern ControlParams cp;   // global instance from main.ino
 extern float drift_value;
+extern float normSteering;
 
 // -----------------------
 // Externs from main.ino
@@ -258,6 +259,8 @@ static void handleMonitor() {
   // Live value from websocket
   s += "<p><b>Current steering:</b> <span id='steer'>--</span> us</p>";
   s += "<p><b>Current driftvalue:</b> <span id='dd_value'>--</span></p>";
+  s += "<p><b>Current normSteering:</b> <span id='normSteering'>--</span></p>";
+  
 
   
 
@@ -274,6 +277,7 @@ function connectWS() {
       const d = JSON.parse(evt.data);
       if (d.steer !== undefined) document.getElementById('steer').textContent = d.steer;
       if (d.dd_value !== undefined) document.getElementById('dd_value').textContent = d.dd_value;
+      if (d.normSteering !== undefined) document.getElementById('normSteering').textContent = d.normSteering;
     } catch(e) {}
   };
   ws.onclose = () => setTimeout(connectWS, 1000);
@@ -333,9 +337,9 @@ static void handleSettings() {
   s += "<label for='steer_out_lp_hz'>steer_out_lp_hz</label><input class='val8' id='steer_out_lp_hz' name='steer_out_lp_hz' type='number' step='1' value='" + String(cp.steer_out_lp_hz) + "'>";
   s += "<label for='wobble_det_a'>wobble_det_amplitude</label><input class='val8' id='wobble_det_a' name='wobble_det_a' type='number' step='0.01' value='" + String(cp.wobble_det_a) + "'>";
   s += "<label for='max_d_corr'>max_d_corr</label><input class='val8' id='max_d_corr' name='max_d_corr' type='number' step='0.001' value='" + String(cp.max_d_corr) + "'>";
-  s += "<label for='dd_min_steer'>dd_min_steer</label><input class='val8' id='dd_min_steer' name='dd_min_steer' type='number' step='0.005' value='" + String(cp.dd_min_steer) + "'>";
-  s += "<label for='dd_min_yaw'>dd_min_yaw</label><input class='val8' id='dd_min_yaw' name='dd_min_yaw' type='number' step='0.5' value='" + String(cp.dd_min_yaw) + "'>";
-  s += "<label for='dd_multiplier'>dd_multiplier</label><input class='val8' id='dd_multiplier' name='dd_multiplier' type='number' step='0.1' value='" + String(cp.dd_multiplier) + "'>";
+  s += "<label for='dd_min_steer'>drift_detect_min_steer</label><input class='val8' id='dd_min_steer' name='dd_min_steer' type='number' step='0.005' value='" + String(cp.dd_min_steer) + "'>";
+  s += "<label for='dd_min_yaw'>drift_detect_min_yaw</label><input class='val8' id='dd_min_yaw' name='dd_min_yaw' type='number' step='0.5' value='" + String(cp.dd_min_yaw) + "'>";
+  s += "<label for='dd_multiplier'>drift_detect_multipl.</label><input class='val8' id='dd_multiplier' name='dd_multiplier' type='number' step='0.1' value='" + String(cp.dd_multiplier) + "'>";
 
   s += "</div>";
 
@@ -417,13 +421,24 @@ void setupSettings() {
   Serial.println("WebSocket server started on port 81.");
 }
 
-void makeSettings() {
+void stopSettings() {
+  server.stop();
+  WiFi.softAPdisconnect(true);
+  WiFi.disconnect(true);
+  WiFi.mode(WIFI_OFF);
+  esp_wifi_stop();
+}
+
+bool makeSettings() {
   //setupSettings();
 
   uint32_t start = millis();
   uint32_t interval;
   
-  exitSettings = 0;
+  if(exitSettings==1) {
+    return false;
+  }
+
   //while (millis() - start < 600000 && exitSettings == 0) {
     server.handleClient();
     ws.loop();
@@ -442,11 +457,11 @@ void makeSettings() {
 
     if (millis() - lastPush >= interval) {
       lastPush = millis();
-      String msg = "{\"steer\":" + String(getSteerPwSnapshot()) + ",\"dd_value\":" + String(getDriftValueSnapshot()) + "}";
+      String msg = "{\"steer\":" + String(getSteerPwSnapshot()) + ",\"dd_value\":" + String(getDriftValueSnapshot()) + ",\"normSteering\":" +  String(normSteering) + "}";
       ws.broadcastTXT(msg);
       //steerServo.writeMicroseconds(getSteerPwSnapshot());
     }
-
+  return true;
     //delay(2);
   //}
 
