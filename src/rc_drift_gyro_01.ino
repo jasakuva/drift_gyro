@@ -385,7 +385,7 @@ void controlTask(void* pvParameters) {
     float drift_multiplier = 1.0f+(drift_value/10)*cp.dd_multiplier;
 
     // calculate steering return damping value based on drifting value
-    float return_damping;
+    float return_damping = 0;
     if((yawRateFilt > 0 && filtered_yaw_derivative < 0) || (yawRateFilt < 0 && filtered_yaw_derivative > 0)) {
       return_damping = drift_value;
     }
