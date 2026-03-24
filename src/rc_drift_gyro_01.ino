@@ -407,16 +407,20 @@ void controlTask(void* pvParameters) {
     //corr = corr_return_lp.update(corr);
     //correction_long_lp.update(corr);
 
-    float correction_before_damping;
+    //return_damping = 0;
 
     float delta = corr - lastGyroCorrection;
-    delta = delta * (1.0f - 0.9f*return_damping);
+    //delta = delta * (1.0f - 0.9f*return_damping);
     if (fabs(delta) > cp.max_d_corr) {
       corr = lastGyroCorrection + (delta > 0 ? cp.max_d_corr : -cp.max_d_corr);
     }
+    float correction_before_damping;
+    correction_before_damping = corr;
+    return_damping = 0;
+    corr = lastGyroCorrection+(corr-lastGyroCorrection)*(1.0f-return_damping);
 
+    //lastGyroCorrection = correction_before_damping;
     lastGyroCorrection = correction_before_damping;
-    
 
     int16_t out = steerIn + (int16_t)corr;
     out = clamp16(out, epa_low_us_2, epa_high_us_2);
