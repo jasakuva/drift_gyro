@@ -4,13 +4,18 @@
 
 lpfilter::lpfilter(float cutoffFrequency, float loopTime) {
   p_loopTime = loopTime;
-  float o = 2.0f * PI * cutoffFrequency * loopTime;
-  k = o / (o + 1.0f);
+  setCutoff(cutoffFrequency);
+  //float o = 2.0f * PI * cutoffFrequency * loopTime;
+  //k = o / (o + 1.0f);
 }
 
 void lpfilter::setCutoff(float cutoffFrequency) {
-  float o = 2.0f * PI * cutoffFrequency * p_loopTime;
-  k = o / (o + 1.0f);
+  if (cutoffFrequency == 0) {
+    k = 1;
+  } else {
+    float o = 2.0f * PI * cutoffFrequency * p_loopTime;
+    k = o / (o + 1.0f);
+  }
 }
 
 float lpfilter::get() {

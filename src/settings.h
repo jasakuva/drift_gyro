@@ -2,4 +2,5 @@
 
 // Settings UI / AP configuration
 void setupSettings();
-void makeSettings();
+bool makeSettings();
+void stopSettings();

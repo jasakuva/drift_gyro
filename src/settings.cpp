@@ -5,10 +5,13 @@
 #include <Preferences.h>
 #include <WebSocketsServer.h>
 #include <ESP32Servo.h>
+#include <sys/time.h>
 
 #include "ControlParams.h"
 
 extern ControlParams cp;   // global instance from main.ino
+extern float drift_value;
+extern float normSteering;
 
 // -----------------------
 // Externs from main.ino
@@ -20,6 +23,7 @@ extern volatile uint16_t s_pw;
 extern float yawRate_dps;
 extern portMUX_TYPE s_mux;
 extern Servo steerServo;
+extern bool settings_changed;
 
 Preferences prefs;
 WebServer server(80);
@@ -41,9 +45,18 @@ int current_steering_us = 1500;
 
 // ---------- Settings variables (8 parameters) ----------
 
-
+uint32_t lastPush = 0;
 
 int exitSettings = 0;
+
+int ws_speedup = 0;
+unsigned long ws_speedup_starttime;
+
+
+uint64_t syncedUnixMs = 0;
+uint32_t syncMillisAtReceive = 0;
+bool timeValid = false;
+int32_t syncedTzOffsetMin = 0;
 
 // ---------- Helpers ----------
 static String htmlHeader(const String& title) {
@@ -80,9 +93,42 @@ static uint16_t getSteerPwSnapshot() {
   uint16_t v;
   portENTER_CRITICAL(&s_mux);
   v = s_pw;
-  //v = yawRate_dps;
+  //v = steering pwm;
   portEXIT_CRITICAL(&s_mux);
   return v;
+}
+
+static float getDriftValueSnapshot() {
+  float v;
+  v = drift_value;
+  return v;
+}
+
+void setSystemTimeFromUnixMs(uint64_t unixMs)
+{
+    struct timeval tv;
+
+    tv.tv_sec  = unixMs / 1000ULL;
+    tv.tv_usec = (unixMs % 1000ULL) * 1000ULL;
+
+    settimeofday(&tv, NULL);
+
+    Serial.println("System time updated");
+}
+
+static void setBrowserTime(uint64_t unixMs, int32_t tzOffsetMin = 0) {
+  syncedUnixMs = unixMs;
+  syncMillisAtReceive = millis();
+  syncedTzOffsetMin = tzOffsetMin;
+  timeValid = true;
+
+  Serial.printf("Time synced: %llu ms, tz offset min: %ld\n",
+                syncedUnixMs, (long)syncedTzOffsetMin);
+}
+
+static uint64_t getCurrentUnixMs() {
+  if (!timeValid) return 0;
+  return syncedUnixMs + (uint32_t)(millis() - syncMillisAtReceive);
 }
 
 // ---------- WebSocket events ----------
@@ -100,9 +146,41 @@ static void onWsEvent(uint8_t num, WStype_t type, uint8_t * payload, size_t leng
       Serial.printf("[WS] Client #%u disconnected\n", num);
       break;
 
-    case WStype_TEXT:
+    case WStype_TEXT: {
       Serial.printf("[WS] Received: %.*s\n", (int)length, (const char*)payload);
-      break;
+
+      String msg = String((const char*)payload);
+
+      // Example expected:
+      // {"type":"time_sync","unix_ms":1710000000000,"tz_offset_min":-120}
+
+      if (msg.indexOf("\"type\":\"time_sync\"") >= 0) {
+        int p1 = msg.indexOf("\"unix_ms\":");
+        if (p1 >= 0) {
+          p1 += 10; // skip "unix_ms":
+          int p2 = msg.indexOf(",", p1);
+          if (p2 < 0) p2 = msg.indexOf("}", p1);
+
+          String unixStr = msg.substring(p1, p2);
+          uint64_t unixMs = strtoull(unixStr.c_str(), nullptr, 10);
+
+          int32_t tzOffsetMin = 0;
+          int tzPos = msg.indexOf("\"tz_offset_min\":");
+          if (tzPos >= 0) {
+            tzPos += 16; // skip "tz_offset_min":
+            int tzEnd = msg.indexOf(",", tzPos);
+            if (tzEnd < 0) tzEnd = msg.indexOf("}", tzPos);
+            String tzStr = msg.substring(tzPos, tzEnd);
+            tzOffsetMin = tzStr.toInt();
+          }
+
+          setBrowserTime(unixMs, tzOffsetMin);
+          setSystemTimeFromUnixMs(unixMs);
+
+          ws.sendTXT(num, "{\"type\":\"time_ack\"}");
+        }
+      }
+    } break;
 
     default:
       break;
@@ -128,6 +206,9 @@ static void loadSettings() {
   cp.pid_p = prefs.getFloat("pid_p", 5.0);
   cp.pid_d = prefs.getFloat("pid_d", 1.0);
   cp.wobble_det_a = prefs.getFloat("wobble_det_a", 0.2);
+  cp.max_d_corr = prefs.getFloat("max_d_corr", 0.05);
+  cp.dd_min_steer = prefs.getFloat("dd_min_steer", 0.05);
+  cp.dd_min_yaw = prefs.getFloat("dd_min_yaw", 15);
 
   prefs.end();
 
@@ -157,8 +238,14 @@ static void saveParameters() {
   prefs.putFloat("pid_p", cp.pid_p);
   prefs.putFloat("pid_d", cp.pid_d);
   prefs.putFloat("wobble_det_a", cp.wobble_det_a);
+  prefs.putFloat("max_d_corr", cp.max_d_corr);
+  prefs.putFloat("dd_min_steer", cp.dd_min_steer);
+  prefs.putFloat("dd_min_yaw", cp.dd_min_yaw);
+  prefs.putFloat("dd_multiplier", cp.dd_multiplier);
 
   prefs.end();
+
+  settings_changed = true;
 }
 
 // ---------- Pages ----------
@@ -168,6 +255,7 @@ static void handleRoot() {
   s += "<p>Main page</p>";
   s += "<a href='/epa'>EPA</a><br>";
   s += "<a href='/settings'>Settings</a><br>";
+  s += "<a href='/monitor'>Monitor</a><br>";
   s += "<a href='/exit'>Exit</a><br>";
   s += "</div>";
   s += "<div class='small'>AP IP: " + WiFi.softAPIP().toString() + "</div>";
@@ -208,6 +296,63 @@ function connectWS() {
     try {
       const d = JSON.parse(evt.data);
       if (d.steer !== undefined) document.getElementById('steer').textContent = d.steer;
+    } catch(e) {}
+  };
+  ws.onclose = () => setTimeout(connectWS, 1000);
+}
+connectWS();
+</script>
+)rawliteral";
+
+  s += htmlFooter();
+  server.send(200, "text/html", s);
+}
+
+
+static void handleMonitor() {
+  ws_speedup = 1;
+  
+  String msg = server.hasArg("msg") ? server.arg("msg") : "";
+
+  String s = htmlHeader("Monitor");
+  s += "<div class='card'>";
+  s += "<div class='row'>";
+  
+  s += "</div>";
+
+  if (msg.length()) s += "<p><b>Status:</b> " + msg + "</p>";
+
+  // Live value from websocket
+  s += "<p><b>Current steering:</b> <span id='steer'>--</span> us</p>";
+  s += "<p><b>Current driftvalue:</b> <span id='dd_value'>--</span></p>";
+  s += "<p><b>Current normSteering:</b> <span id='normSteering'>--</span></p>";
+  
+
+  
+
+  s += "<a href='/'>Back</a>";
+  s += "</div>";
+
+  s += R"rawliteral(
+<script>
+let ws;
+function connectWS() {
+  ws = new WebSocket(`ws://${location.hostname}:81/`);
+  ws.onopen = () => {
+    const now = new Date();
+    ws.send(JSON.stringify({
+      type: "time_sync",
+      unix_ms: Date.now(),
+      tz_offset_min: now.getTimezoneOffset()
+    }));
+  };
+  
+  ws.onmessage = (evt) => {
+    try {
+      const d = JSON.parse(evt.data);
+      if (d.steer !== undefined) document.getElementById('steer').textContent = d.steer;
+      if (d.dd_value !== undefined) document.getElementById('dd_value').textContent = d.dd_value;
+      if (d.normSteering !== undefined) document.getElementById('normSteering').textContent = d.normSteering;
     } catch(e) {}
   };
   ws.onclose = () => setTimeout(connectWS, 1000);
@@ -266,6 +411,10 @@ static void handleSettings() {
   s += "<label for='steer_in_lp_hz'>steer_in_lp_hz</label><input class='val8' id='steer_in_lp_hz' name='steer_in_lp_hz' type='number' step='1' value='" + String(cp.steer_in_lp_hz) + "'>";
   s += "<label for='steer_out_lp_hz'>steer_out_lp_hz</label><input class='val8' id='steer_out_lp_hz' name='steer_out_lp_hz' type='number' step='1' value='" + String(cp.steer_out_lp_hz) + "'>";
   s += "<label for='wobble_det_a'>wobble_det_amplitude</label><input class='val8' id='wobble_det_a' name='wobble_det_a' type='number' step='0.01' value='" + String(cp.wobble_det_a) + "'>";
+  s += "<label for='max_d_corr'>max_d_corr</label><input class='val8' id='max_d_corr' name='max_d_corr' type='number' step='0.001' value='" + String(cp.max_d_corr) + "'>";
+  s += "<label for='dd_min_steer'>drift_detect_min_steer</label><input class='val8' id='dd_min_steer' name='dd_min_steer' type='number' step='0.005' value='" + String(cp.dd_min_steer) + "'>";
+  s += "<label for='dd_min_yaw'>drift_detect_min_yaw</label><input class='val8' id='dd_min_yaw' name='dd_min_yaw' type='number' step='0.5' value='" + String(cp.dd_min_yaw) + "'>";
+  s += "<label for='dd_multiplier'>drift_detect_multipl.</label><input class='val8' id='dd_multiplier' name='dd_multiplier' type='number' step='0.1' value='" + String(cp.dd_multiplier) + "'>";
 
   s += "</div>";
 
@@ -291,6 +440,11 @@ static void handleSettingsSet() {
   cp.derivative_lp_hz = getArgInt("derivative_lp_hz", cp.derivative_lp_hz);
   cp.steer_in_lp_hz = getArgInt("steer_in_lp_hz", cp.steer_in_lp_hz);
   cp.steer_out_lp_hz = getArgInt("steer_out_lp_hz", cp.steer_out_lp_hz);
+  cp.wobble_det_a = getArgFloat("wobble_det_a", cp.wobble_det_a);
+  cp.max_d_corr = getArgFloat("max_d_corr", cp.max_d_corr);
+  cp.dd_min_steer = getArgFloat("dd_min_steer", cp.dd_min_steer);
+  cp.dd_min_yaw = getArgFloat("dd_min_yaw", cp.dd_min_yaw);
+  cp.dd_multiplier = getArgFloat("dd_multiplier", cp.dd_multiplier);
   //Serial.print("cp.gyro_avg="); Serial.print(cp.gyro_avg);
 
   saveParameters();
@@ -330,6 +484,7 @@ void setupSettings() {
   server.on("/epa/action", HTTP_POST, handleEPAAction);
   server.on("/settings", HTTP_GET, handleSettings);
   server.on("/settings/set", HTTP_POST, handleSettingsSet);
+  server.on("/monitor", HTTP_GET, handleMonitor);
   server.on("/exit", HTTP_GET, handleExit);
   server.onNotFound(handleNotFound);
 
@@ -341,30 +496,53 @@ void setupSettings() {
   Serial.println("WebSocket server started on port 81.");
 }
 
-void makeSettings() {
-  setupSettings();
+void stopSettings() {
+  server.stop();
+  WiFi.softAPdisconnect(true);
+  WiFi.disconnect(true);
+  WiFi.mode(WIFI_OFF);
+  esp_wifi_stop();
+}
+
+bool makeSettings() {
+  //setupSettings();
 
   uint32_t start = millis();
-  uint32_t lastPush = 0;
-  exitSettings = 0;
-  while (millis() - start < 600000 && exitSettings == 0) {
+  uint32_t interval;
+  
+  if(exitSettings==1) {
+    return false;
+  }
+
+  //while (millis() - start < 600000 && exitSettings == 0) {
     server.handleClient();
     ws.loop();
 
     // Push ~5 Hz
-    if (millis() - lastPush >= 50) {
-      lastPush = millis();
-      String msg = "{\"steer\":" + String(getSteerPwSnapshot()) + "}";
-      ws.broadcastTXT(msg);
-      steerServo.writeMicroseconds(getSteerPwSnapshot());
+    if(ws_speedup==1) {
+      ws_speedup_starttime = millis();
+      ws_speedup = 0;
+    }
+    
+    if(ws_speedup_starttime + 60000 > millis()) {
+      interval = 200;
+    } else {
+      interval = 1000;
     }
 
-    delay(2);
-  }
+    if (millis() - lastPush >= interval) {
+      lastPush = millis();
+      String msg = "{\"steer\":" + String(getSteerPwSnapshot()) + ",\"dd_value\":" + String(getDriftValueSnapshot()) + ",\"normSteering\":" +  String(normSteering) + "}";
+      ws.broadcastTXT(msg);
+      //steerServo.writeMicroseconds(getSteerPwSnapshot());
+    }
+  return true;
+    //delay(2);
+  //}
 
-  server.stop();                 // stop HTTP
-  WiFi.softAPdisconnect(true);   // stop AP
-  WiFi.disconnect(true);         // stop STA (if used)
-  WiFi.mode(WIFI_OFF);           // disable Wi-Fi
-  esp_wifi_stop();               // stop driver
+  //server.stop();                 // stop HTTP
+  //WiFi.softAPdisconnect(true);   // stop AP
+  //WiFi.disconnect(true);         // stop STA (if used)
+  //WiFi.mode(WIFI_OFF);           // disable Wi-Fi
+  //esp_wifi_stop();               // stop driver
 }
