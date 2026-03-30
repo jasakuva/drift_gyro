@@ -111,7 +111,7 @@ SteeringMap mySteeringMap(1000, 2000, 1500);
 
 // ---- ISR pulse capture ----
 volatile uint32_t s_rise = 0, g_rise = 0;
-volatile uint16_t s_pw   = 1700, g_pw = RC_MID;
+volatile uint16_t s_pw   = RC_MID, g_pw = RC_MID;
 
 bool settings_changed = false;
 
@@ -193,6 +193,8 @@ static void loadSettings_2() {
   cp.pid_d            = prefs_2.getFloat("pid_d", 1.0);
   cp.wobble_det_a     = prefs_2.getFloat("wobble_det_a", 0.2);
   cp.max_d_corr       = prefs_2.getFloat("max_d_corr", 0.05);
+  cp.dd_min_steer     = prefs_2.getFloat("dd_min_steer", 0.05);
+  cp.dd_min_yaw       = prefs_2.getFloat("dd_min_yaw", 15);
 
   gyro_lp.setCutoff(cp.gyro_lp_hz);
   derivative_lp.setCutoff(cp.derivative_lp_hz);

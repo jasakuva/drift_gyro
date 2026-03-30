@@ -8,6 +8,7 @@
 #include <sys/time.h>
 
 #include "ControlParams.h"
+#include "logging.h"
 
 extern ControlParams cp;   // global instance from main.ino
 extern float drift_value;
@@ -250,15 +251,66 @@ static void saveParameters() {
 
 // ---------- Pages ----------
 static void handleRoot() {
+  if (server.hasArg("logging")) {
+    String val = server.arg("logging");
+
+    if (val == "1") {
+      if (!loggingIsRunning()) {
+        Serial.println("start logging");
+        //loggingBegin(SD_CS_PIN, "/driftlog.bin", 0);
+      }
+    } 
+    else if (val == "0") {
+      if (loggingIsRunning()) {
+        Serial.println("stop logging");
+        //loggingStop();
+      }
+    }
+
+    server.sendHeader("Location", "/");
+    server.send(303);
+    return;
+  }
+  
   String s = htmlHeader("ESP32 Control");
   s += "<div class='card'>";
   s += "<p>Main page</p>";
   s += "<a href='/epa'>EPA</a><br>";
   s += "<a href='/settings'>Settings</a><br>";
   s += "<a href='/monitor'>Monitor</a><br>";
+  if(!loggingIsRunning()) {
+    s += "<a href='/?logging=1'>Start Logger</a><br>";
+  } else {
+    s += "<a href='/?logging=0'>Stop Logger</a><br>";
+  }
+  s += "<br><br><br>";
   s += "<a href='/exit'>Exit</a><br>";
   s += "</div>";
   s += "<div class='small'>AP IP: " + WiFi.softAPIP().toString() + "</div>";
+    s += R"rawliteral(
+<script>
+let ws;
+function connectWS() {
+  ws = new WebSocket(`ws://${location.hostname}:81/`);
+  ws.onopen = () => {
+    const now = new Date();
+    ws.send(JSON.stringify({
+      type: "time_sync",
+      unix_ms: Date.now(),
+      tz_offset_min: now.getTimezoneOffset()
+    }));
+  };
+  
+  ws.onmessage = (evt) => {
+    try {
+      const d = JSON.parse(evt.data);
+      } catch(e) {}
+  };
+  ws.onclose = () => setTimeout(connectWS, 1000);
+}
+connectWS();
+</script>
+)rawliteral";
   s += htmlFooter();
   server.send(200, "text/html", s);
 }
@@ -327,9 +379,6 @@ static void handleMonitor() {
   s += "<p><b>Current driftvalue:</b> <span id='dd_value'>--</span></p>";
   s += "<p><b>Current normSteering:</b> <span id='normSteering'>--</span></p>";
   
-
-  
-
   s += "<a href='/'>Back</a>";
   s += "</div>";
 
