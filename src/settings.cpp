@@ -115,6 +115,19 @@ void setSystemTimeFromUnixMs(uint64_t unixMs)
     settimeofday(&tv, NULL);
 
     Serial.println("System time updated");
+
+    time_t now;
+    time(&now);
+
+    struct tm timeinfo;
+    localtime_r(&now, &timeinfo);
+
+    char buffer[64];
+    strftime(buffer, sizeof(buffer), "%Y-%m-%d %H:%M:%S", &timeinfo);
+
+    String timeString = String(buffer);
+
+    Serial.println(timeString);
 }
 
 static void setBrowserTime(uint64_t unixMs, int32_t tzOffsetMin = 0) {
@@ -583,15 +596,7 @@ bool makeSettings() {
       lastPush = millis();
       String msg = "{\"steer\":" + String(getSteerPwSnapshot()) + ",\"dd_value\":" + String(getDriftValueSnapshot()) + ",\"normSteering\":" +  String(normSteering) + "}";
       ws.broadcastTXT(msg);
-      //steerServo.writeMicroseconds(getSteerPwSnapshot());
     }
   return true;
-    //delay(2);
-  //}
-
-  //server.stop();                 // stop HTTP
-  //WiFi.softAPdisconnect(true);   // stop AP
-  //WiFi.disconnect(true);         // stop STA (if used)
-  //WiFi.mode(WIFI_OFF);           // disable Wi-Fi
-  //esp_wifi_stop();               // stop driver
+  
 }

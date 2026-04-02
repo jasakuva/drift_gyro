@@ -458,14 +458,14 @@ void controlTask(void* pvParameters) {
         s.t_us = micros();
 
         // Replace with your real drift stabilizer parameters
-        s.p1 = 1.0f;
-        s.p2 = 2.0f;
-        s.p3 = 3.0f;
-        s.p4 = 4.0f;
-        s.p5 = 5.0f;
-        s.p6 = 6.0f;
-        s.p7 = 7.0f;
-        s.p8 = 8.0f;
+        s.p1 = yawRateFilt;
+        s.p2 = gyrodps;
+        s.p3 = corr;
+        s.p4 = steerIn;
+        s.p5 = out;
+        s.p6 = correction_before_damping;
+        s.p7 = gain;
+        s.p8 = drift_multiplier;
 
         loggingEnqueue(s);
 
