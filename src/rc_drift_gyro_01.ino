@@ -31,7 +31,9 @@ AdaptiveGains ag;
 #define SDA_PIN D4
 #define SCL_PIN D5
 
-#define SD_CS_PIN D6
+
+
+
 
 // ---- Pins ----
 const uint8_t PIN_STEER_IN  = D0;
@@ -106,6 +108,8 @@ int epa_center_us_2 = 1500;
 int epa_high_us_2   = 1900;
 
 int to_settings_counter;
+
+int logging_counter = 0;
 
 SteeringMap mySteeringMap(1000, 2000, 1500);
 
@@ -289,7 +293,7 @@ void setup() {
   xTaskCreatePinnedToCore(
     controlTask,         // task function
     "controlTask",       // name
-    8192,                // stack size
+    16384,                // stack size
     nullptr,             // parameter
     3,                   // priority
     &controlTaskHandle,  // handle
@@ -300,7 +304,7 @@ void setup() {
   xTaskCreatePinnedToCore(
     wifiTask,
     "wifiTask",
-    8192,
+    12288,
     nullptr,
     4,
     &wifiTaskHandle,
@@ -311,14 +315,6 @@ void setup() {
   timerAttachInterrupt(controlTimer, &onControlTimer);
   timerAlarm(controlTimer, LOOP_PERIOD_US, true, 0);   // auto-reload, unlimited
 
-  /*
-  if (!loggingBegin(SD_CS_PIN, "/driftlog.bin", 0)) {
-        Serial.println("Logging init failed");
-        while (true) {
-            delay(1000);
-        }
-    }
-  */
 }
 
 //void handleRoot() {
@@ -454,20 +450,43 @@ void controlTask(void* pvParameters) {
     out = servoout_lp.update(out);
     steerServo.writeMicroseconds(out);
 
-     LogSample s;
+    logging_counter ++;
+    if(logging_counter >= 8) {
+      float p1 = yawRateFilt;
+      float p2 = gyrodps;
+      float p3 = corr;
+      float p4 = steerIn;
+      float p5 = out;
+      float p6 = correction_before_damping;
+      float p7 = gain;
+      float p8 = drift_multiplier;
+      LogSample s;
         s.t_us = micros();
 
         // Replace with your real drift stabilizer parameters
-        s.p1 = yawRateFilt;
-        s.p2 = gyrodps;
-        s.p3 = corr;
-        s.p4 = steerIn;
-        s.p5 = out;
-        s.p6 = correction_before_damping;
-        s.p7 = gain;
-        s.p8 = drift_multiplier;
+        s.p1 = p1;
+        s.p2 = p2;
+        s.p3 = p3;
+        s.p4 = p4;
+        s.p5 = p5;
+        s.p6 = p6;
+        s.p7 = p7;
+        s.p8 = p8;
+
+    //    Serial.printf("%lu %.3f %.3f %.3f %.3f %.3f %.3f %.3f %.3f\n",
+    //(unsigned long)s.t_us,
+    //s.p1, s.p2, s.p3, s.p4, s.p5, s.p6, s.p7, s.p8);
 
         loggingEnqueue(s);
+
+        //Serial.print("p1="); Serial.print(yawRateFilt);
+        //Serial.print("p3="); Serial.print(corr);
+        //Serial.print("p4="); Serial.print(steerIn);
+        //Serial.print("p8="); Serial.print(drift_multiplier);
+        //Serial.print("cp.gain="); Serial.println(cp.gain);
+
+      logging_counter = 0;
+    }
 
     
     // debug printing

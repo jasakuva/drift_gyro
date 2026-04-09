@@ -10,6 +10,11 @@
 #include "ControlParams.h"
 #include "logging.h"
 
+#define SD_CS_PIN D7
+#define SD_SCK_PIN D8
+#define SD_MISO_PIN D9
+#define SD_MOSI_PIN D10
+
 extern ControlParams cp;   // global instance from main.ino
 extern float drift_value;
 extern float normSteering;
@@ -270,13 +275,23 @@ static void handleRoot() {
     if (val == "1") {
       if (!loggingIsRunning()) {
         Serial.println("start logging");
-        //loggingBegin(SD_CS_PIN, "/driftlog.bin", 0);
+
+        time_t now;
+        time(&now);
+        struct tm timeinfo;
+        localtime_r(&now, &timeinfo);
+        char timeBuf[32];
+        strftime(timeBuf, sizeof(timeBuf), "%Y%m%d_%H%M%S", &timeinfo);
+        char filename[64];
+        snprintf(filename, sizeof(filename), "/log_%s.bin", timeBuf);
+        loggingBegin(SD_CS_PIN, SD_SCK_PIN, SD_MISO_PIN, SD_MOSI_PIN, filename,0);
+
       }
     } 
     else if (val == "0") {
       if (loggingIsRunning()) {
         Serial.println("stop logging");
-        //loggingStop();
+        loggingStop();
       }
     }
 
@@ -293,7 +308,7 @@ static void handleRoot() {
   s += "<a href='/monitor'>Monitor</a><br>";
   if(!loggingIsRunning()) {
     s += "<a href='/?logging=1'>Start Logger</a><br>";
-  } else {
+    } else {
     s += "<a href='/?logging=0'>Stop Logger</a><br>";
   }
   s += "<br><br><br>";

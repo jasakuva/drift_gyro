@@ -3,6 +3,11 @@
 #include "freertos/task.h"
 #include "freertos/queue.h"
 
+#define SD_CS_PIN D7
+#define SD_SCK_PIN D8
+#define SD_MISO_PIN D9
+#define SD_MOSI_PIN D10
+
 // -----------------------------
 // Static globals
 // -----------------------------
@@ -12,20 +17,31 @@ static File s_logFile;
 static volatile bool s_loggerRunning = false;
 static volatile uint32_t s_droppedSamples = 0;
 
-static uint8_t s_sdCsPin = 5;
+//static uint8_t s_sdCsPin   = 5;
+//static uint8_t s_sdSckPin  = 7;
+//static uint8_t s_sdMisoPin = 8;
+//static uint8_t s_sdMosiPin = 9;
+
+static SPIClass s_sdSpi(FSPI);   // ESP32-S3
+
 static LogSample s_writeBuffer[LOG_BUFFER_SAMPLES];
 static size_t s_writeBufferCount = 0;
 
 // -----------------------------
 // Internal helpers
 // -----------------------------
-static bool initSD()
+//sckPin, misoPin, mosiPin, csPin)
+static bool initSD(uint8_t s_sdSckPin, uint8_t s_sdMisoPin, uint8_t s_sdMosiPin, uint8_t s_sdCsPin)
 {
-    if (!SD.begin(s_sdCsPin)) {
+    SPI.begin(SD_SCK_PIN, SD_MISO_PIN, SD_MOSI_PIN, SD_CS_PIN);
+    Serial.println("spi initialized");
+
+    if (!SD.begin(SD_CS_PIN)) {
+    //if (!SD.begin(s_sdCsPin)) {
         Serial.println("SD.begin failed");
         return false;
     }
-
+    Serial.println("sd initialized");
     uint8_t cardType = SD.cardType();
     if (cardType == CARD_NONE) {
         Serial.println("No SD card attached");
@@ -79,13 +95,19 @@ static void loggerTask(void* parameter)
 
     while (s_loggerRunning) {
         if (xQueueReceive(s_logQueue, &incoming, pdMS_TO_TICKS(20)) == pdTRUE) {
-            s_writeBuffer[s_writeBufferCount++] = incoming;
-
+       //    Serial.printf("RX %lu %.3f %.3f %.3f %.3f %.3f %.3f %.3f %.3f\n",
+       // (unsigned long)incoming.t_us,
+       // incoming.p1, incoming.p2, incoming.p3, incoming.p4,
+       // incoming.p5, incoming.p6, incoming.p7, incoming.p8);
+            
             if (s_writeBufferCount >= LOG_BUFFER_SAMPLES) {
                 flushWriteBufferInternal();
             }
-        }
 
+            s_writeBuffer[s_writeBufferCount++] = incoming;
+          
+        }
+      
         uint32_t nowMs = millis();
         if ((nowMs - lastFlushMs) >= 100) {
             flushWriteBufferInternal();
@@ -94,13 +116,14 @@ static void loggerTask(void* parameter)
             }
             lastFlushMs = nowMs;
         }
+      
     }
 
-    // Drain queue on shutdown
     while (xQueueReceive(s_logQueue, &incoming, 0) == pdTRUE) {
         if (s_writeBufferCount >= LOG_BUFFER_SAMPLES) {
             flushWriteBufferInternal();
         }
+
         s_writeBuffer[s_writeBufferCount++] = incoming;
     }
 
@@ -118,18 +141,29 @@ static void loggerTask(void* parameter)
 // -----------------------------
 // Public API
 // -----------------------------
-bool loggingBegin(uint8_t csPin, const char* filename, uint8_t core)
+
+//loggingBegin(SD_CS_PIN, SD_SCK_PIN, SD_MISO_PIN, SD_MOSI_PIN, filename,0);
+bool loggingBegin(uint8_t csPin,
+                  uint8_t sckPin,
+                  uint8_t misoPin,
+                  uint8_t mosiPin,
+                  const char* filename,
+                  uint8_t core)
 {
     if (s_loggerRunning) {
         Serial.println("Logger already running");
         return true;
     }
 
-    s_sdCsPin = csPin;
+    //s_sdCsPin   = csPin;
+    //s_sdSckPin  = sckPin;
+    //s_sdMisoPin = misoPin;
+    //s_sdMosiPin = mosiPin;
+
     s_droppedSamples = 0;
     s_writeBufferCount = 0;
 
-    if (!initSD()) {
+    if (!initSD(sckPin, misoPin, mosiPin, csPin)) {
         return false;
     }
 
@@ -149,9 +183,9 @@ bool loggingBegin(uint8_t csPin, const char* filename, uint8_t core)
     BaseType_t ok = xTaskCreatePinnedToCore(
         loggerTask,
         "LoggerTask",
-        8192,
+        16384,
         nullptr,
-        1,
+        3,
         &s_loggerTaskHandle,
         core
     );
@@ -168,7 +202,8 @@ bool loggingBegin(uint8_t csPin, const char* filename, uint8_t core)
     return true;
 }
 
-bool loggingEnqueue(const LogSample& sample)
+//bool loggingEnqueue(const LogSample& sample)
+bool loggingEnqueue(LogSample sample)
 {
     if (!s_loggerRunning || s_logQueue == nullptr) {
         return false;
@@ -185,10 +220,7 @@ bool loggingEnqueue(const LogSample& sample)
 
 void loggingFlush()
 {
-    if (s_logFile) {
-        flushWriteBufferInternal();
-        s_logFile.flush();
-    }
+    
 }
 
 void loggingStop()
@@ -199,7 +231,6 @@ void loggingStop()
 
     s_loggerRunning = false;
 
-    // Wait briefly for task to finish
     uint32_t start = millis();
     while (s_loggerTaskHandle != nullptr && (millis() - start) < 2000) {
         delay(10);

@@ -2,9 +2,9 @@
 #define LOGGING_H
 
 #include <Arduino.h>
-#include <FS.h>
-#include <SD.h>
-#include <SPI.h>
+#include "FS.h"
+#include "SD.h"
+#include "SPI.h"
 
 // -----------------------------
 // Configuration
@@ -35,8 +35,14 @@ struct LogSample {
 // -----------------------------
 // API
 // -----------------------------
-bool loggingBegin(uint8_t csPin, const char* filename = "/driftlog.bin", uint8_t core = 0);
-bool loggingEnqueue(const LogSample& sample);
+bool loggingBegin(uint8_t csPin,
+                  uint8_t sckPin,
+                  uint8_t misoPin,
+                  uint8_t mosiPin,
+                  const char* filename,
+                  uint8_t core);
+//bool loggingEnqueue(const LogSample& sample);
+bool loggingEnqueue(LogSample sample);
 void loggingStop();
 void loggingFlush();
 bool loggingIsRunning();
