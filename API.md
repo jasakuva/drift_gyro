@@ -1,24 +1,65 @@
-# API Documentation
+# API Reference Documentation
 
-## Introduction
-This document provides detailed API documentation for the classes and methods in the Drift Gyro project.
+## ControlParams
+### ControlParams(parameters)
+- **Parameters**: `param1`: type - Description of param1
 
-## Classes
+### Example
+```python
+cp = ControlParams(param1=value)
+```
 
-### Class 1: [ClassName]
-- **Description**: [Brief description of the class]
-- **Methods**:
-  - `method1(args)` - [Description of method1]
-  - `method2(args)` - [Description of method2]
 
-### Class 2: [ClassName]
-- **Description**: [Brief description of the class]
-- **Methods**:
-  - `method1(args)` - [Description of method1]
-  - `method2(args)` - [Description of method2]
+## DriftDetector
+### DriftDetector(parameters)
+- **Parameters**: `param1`: type - Description of param1
 
-## Method Descriptions
-Each method is described in the class definitions above. Be sure to refer back to them for detailed usage.
+### Example
+```python
+detector = DriftDetector(param1=value)
+```
 
-## Parameters and Return Types
-This section will detail the parameters required for each method as well as their return types, if applicable.
+## WobbleDetectorZC
+### WobbleDetectorZC(parameters)
+- **Parameters**: `param1`: type - Description of param1
+
+### Example
+```python
+wobble_detector = WobbleDetectorZC(param1=value)
+```
+
+## AdaptiveGains
+### AdaptiveGains(parameters)
+- **Parameters**: `param1`: type - Description of param1
+
+### Example
+```python
+adaptgains = AdaptiveGains(param1=value)
+```
+
+## SteeringMap
+### SteeringMap(parameters)
+- **Parameters**: `param1`: type - Description of param1
+
+### Example
+```python
+steering_map = SteeringMap(param1=value)
+```
+
+## lpfilter
+### lpfilter(parameters)
+- **Parameters**: `param1`: type - Description of param1
+
+### Example
+```python
+filtered_data = lpfilter(data)
+```
+
+## LogSample
+### LogSample(parameters)
+- **Parameters**: `param1`: type - Description of param1
+
+### Example
+```python
+log_sample = LogSample(param1=value)
+```
