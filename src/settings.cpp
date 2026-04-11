@@ -10,6 +10,9 @@
 #include "ControlParams.h"
 #include "logging.h"
 
+#include <SPI.h>
+#include <SD.h>
+
 #define SD_CS_PIN D7
 #define SD_SCK_PIN D8
 #define SD_MISO_PIN D9
@@ -234,6 +237,129 @@ static void loadSettings() {
   Serial.println("Settings loaded from NVS (or defaults)");
 }
 
+static bool ensureSdMounted() {
+  static bool sdReady = false;
+
+  if (sdReady) return true;
+
+  SPI.begin(SD_SCK_PIN, SD_MISO_PIN, SD_MOSI_PIN, SD_CS_PIN);
+
+  if (!SD.begin(SD_CS_PIN)) {
+    Serial.println("SD mount failed in settings task");
+    sdReady = false;
+    return false;
+  }
+
+  uint8_t cardType = SD.cardType();
+  if (cardType == CARD_NONE) {
+    Serial.println("No SD card attached");
+    sdReady = false;
+    return false;
+  }
+
+  sdReady = true;
+  return true;
+}
+
+static void handleLogs() {
+  String s = htmlHeader("Log Files");
+  s += "<div class='card'>";
+
+  if (!ensureSdMounted()) {
+    s += "<p>SD card not available</p>";
+    s += "<a href='/'>Back</a></div>";
+    s += htmlFooter();
+    server.send(500, "text/html", s);
+    return;
+  }
+
+  File root = SD.open("/");
+  if (!root || !root.isDirectory()) {
+    s += "<p>Failed to open SD root</p>";
+    s += "<a href='/'>Back</a></div>";
+    s += htmlFooter();
+    server.send(500, "text/html", s);
+    return;
+  }
+
+  bool found = false;
+  File file = root.openNextFile();
+
+  while (file) {
+    if (!file.isDirectory()) {
+      String name = file.name();
+
+      // Keep only your log files
+      if ((name.startsWith("log_") || name.startsWith("/log_")) && name.endsWith(".bin")) {
+        found = true;
+
+        s += "<div>";
+        s += "<a href='/download?name=" + name + "'>" + name + "</a>";
+
+        size_t sz = file.size();
+        s += " <span class='small'>(" + String((unsigned long)sz) + " bytes)</span>";
+        s += "</div>";
+      }
+    }
+
+    file = root.openNextFile();
+  }
+
+  if (!found) {
+    s += "<p>No log files found.</p>";
+  }
+
+  s += "<br><a href='/'>Back</a>";
+  s += "</div>";
+  s += htmlFooter();
+
+  server.send(200, "text/html", s);
+}
+
+static void handleDownload() {
+  if (!server.hasArg("name")) {
+    server.send(400, "text/plain", "Missing file name");
+    return;
+  }
+
+  if (!ensureSdMounted()) {
+    server.send(500, "text/plain", "SD not available");
+    return;
+  }
+
+  String path = server.arg("name");
+
+  // Basic validation
+  if (!path.startsWith("/")) path = "/" + path;
+  if (path.indexOf("..") >= 0) {
+    server.send(400, "text/plain", "Invalid file name");
+    return;
+  }
+
+  // Optional: block downloads while logger is running
+  if (loggingIsRunning()) {
+    server.send(409, "text/plain", "Stop logging before downloading files");
+    return;
+  }
+
+  File file = SD.open(path, FILE_READ);
+  if (!file || file.isDirectory()) {
+    server.send(404, "text/plain", "File not found");
+    return;
+  }
+
+  String shortName = path;
+  int slash = shortName.lastIndexOf('/');
+  if (slash >= 0) shortName = shortName.substring(slash + 1);
+
+  server.sendHeader("Content-Type", "application/octet-stream");
+  server.sendHeader("Content-Disposition", "attachment; filename=\"" + shortName + "\"");
+  server.sendHeader("Connection", "close");
+
+  server.streamFile(file, "application/octet-stream");
+  file.close();
+}
+
 static void saveEpa() {
   prefs.begin("rc", false);
   prefs.putInt("epaL", epa_low_us);
@@ -312,7 +438,8 @@ static void handleRoot() {
     s += "<a href='/?logging=0'>Stop Logger</a><br>";
   }
   s += "<br><br><br>";
-  s += "<a href='/exit'>Exit</a><br>";
+  s += "<a href='/logs'>Logs</a><br>";
+  s += "<p><a href='/exit'>Exit</a><br>";
   s += "</div>";
   s += "<div class='small'>AP IP: " + WiFi.softAPIP().toString() + "</div>";
     s += R"rawliteral(
@@ -561,6 +688,8 @@ void setupSettings() {
   server.on("/epa/action", HTTP_POST, handleEPAAction);
   server.on("/settings", HTTP_GET, handleSettings);
   server.on("/settings/set", HTTP_POST, handleSettingsSet);
+  server.on("/logs", HTTP_GET, handleLogs);
+  server.on("/download", HTTP_GET, handleDownload);
   server.on("/monitor", HTTP_GET, handleMonitor);
   server.on("/exit", HTTP_GET, handleExit);
   server.onNotFound(handleNotFound);
