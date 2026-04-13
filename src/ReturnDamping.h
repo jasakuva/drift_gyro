@@ -10,6 +10,7 @@ class ReturnDamping {
     float v_activate_value;
     float v_up_increment;
     float v_down_increment;
+    bool v_triggered;
     float v_return_increment;
     float v_input_derivative_trigger;
 };

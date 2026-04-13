@@ -12,6 +12,7 @@
 #include "WobbleDetectorZC.h"
 #include "AdaptiveGains.h"
 #include "DriftDetector.h"
+#include "ReturnDamping.h"
 #include <math.h>
 
 #include "logging.h"
@@ -96,7 +97,7 @@ myMovingAverage<10> drift_value_avg;
 
 DriftDetector driftd(LOOP_PERIOD_S, 0.05f, 10.0f);
 
-
+ReturnDamping return_damp(0.25f, 0.1f, 0.0f, 0.0f);
 
 // ---- RC ranges ----
 const int16_t RC_MIN = 1000;
@@ -397,12 +398,18 @@ void controlTask(void* pvParameters) {
 
     // calculate steering return damping value based on drifting value
     float return_damping = 0;
-    if((yawRateFilt > 0 && filtered_yaw_derivative < 0) || (yawRateFilt < 0 && filtered_yaw_derivative > 0)) {
-      return_damping = drift_value;
-    }
+    return_damping = return_damp.getDamping(corr, 0.0f); 
+    //if((yawRateFilt > 0 && filtered_yaw_derivative < 0) || (yawRateFilt < 0 && filtered_yaw_derivative > 0)) {
+    //  return_damping = drift_value;
+    //}
 
     // PID
-    gyro_correction = drift_multiplier * cp.gain * gain * (cp.pid_p * yawRateFilt + cp.pid_d * filtered_yaw_derivative);
+    float curve_gain = 1;
+    if(fabsf(yawRateFilt)<10) {
+      curve_gain = yawRateFilt * 0.1f;
+    }
+
+    gyro_correction = curve_gain * drift_multiplier * cp.gain * gain * (cp.pid_p * yawRateFilt + cp.pid_d * filtered_yaw_derivative);
 
     corr = gyro_correction;
 
@@ -415,6 +422,8 @@ void controlTask(void* pvParameters) {
       corr = 0.0f;
     }
 
+    return_damping = return_damp.getDamping(corr, 0.0f); 
+
     //corr = corr_return_lp.update(corr);
     //correction_long_lp.update(corr);
 
@@ -422,10 +431,14 @@ void controlTask(void* pvParameters) {
 
     float delta = corr - lastGyroCorrection;
     
+    
+
     // return damping, percentage method
-    delta = delta * (1.0f - 0.9f*sqrt(return_damping));
+    //delta = delta * (1.0f - 1.0f*sqrt(return_damping));
 
     // return damping clamp version
+    
+    /*
     if (fabs(return_damping > 0)) {
       if (delta > 1) {
         delta = 1.0f - 0.9f*sqrt(return_damping);
@@ -435,14 +448,15 @@ void controlTask(void* pvParameters) {
         delta = -1.0f + 0.9f*sqrt(return_damping);
       } 
     }
-    
+    */
+    corr = lastGyroCorrection + delta;
     // global damper
-    if (fabs(delta) > cp.max_d_corr) {
-      corr = lastGyroCorrection + (delta > 0 ? cp.max_d_corr : -cp.max_d_corr);
-    }
+    //if (fabs(delta) > cp.max_d_corr) {
+    //  corr = lastGyroCorrection + (delta > 0 ? cp.max_d_corr : -cp.max_d_corr);
+    //}
 
-    lastGyroCorrection = correction_before_damping;
-    
+    //lastGyroCorrection = correction_before_damping;
+    lastGyroCorrection = corr;
 
     int16_t out = steerIn + (int16_t)corr;
     out = clamp16(out, epa_low_us_2, epa_high_us_2);
@@ -451,7 +465,7 @@ void controlTask(void* pvParameters) {
     steerServo.writeMicroseconds(out);
 
     logging_counter ++;
-    if(logging_counter >= 8) {
+    if(logging_counter >= 4) {
       float p1 = yawRateFilt;
       float p2 = gyrodps;
       float p3 = corr;
@@ -459,7 +473,7 @@ void controlTask(void* pvParameters) {
       float p5 = out;
       float p6 = correction_before_damping;
       float p7 = gain;
-      float p8 = drift_multiplier;
+      float p8 = return_damping;
       LogSample s;
         s.t_us = micros();
 
