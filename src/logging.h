@@ -10,11 +10,11 @@
 // Configuration
 // -----------------------------
 #ifndef LOG_QUEUE_LENGTH
-#define LOG_QUEUE_LENGTH 512
+#define LOG_QUEUE_LENGTH 256
 #endif
 
 #ifndef LOG_BUFFER_SAMPLES
-#define LOG_BUFFER_SAMPLES 128
+#define LOG_BUFFER_SAMPLES 8
 #endif
 
 // -----------------------------

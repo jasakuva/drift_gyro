@@ -58,6 +58,11 @@ float RollingPeak::getPeak() const
     return peak;
 }
 
+float RollingPeak::addGetPeak(float value){
+  add(value);
+  return getPeak();
+}
+
 bool RollingPeak::isFull() const
 {
     return (_count == _windowSize);

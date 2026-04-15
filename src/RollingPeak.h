@@ -6,12 +6,13 @@
 class RollingPeak
 {
 public:
-    static const int MAX_WINDOW = 20;
+    static const int MAX_WINDOW = 40;
 
     explicit RollingPeak(int windowSize);
 
     void add(float value);
     float getPeak() const;
+    float addGetPeak(float value);
     bool isFull() const;
     int count() const;
     void clear();

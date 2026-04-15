@@ -109,7 +109,7 @@ static void loggerTask(void* parameter)
         }
       
         uint32_t nowMs = millis();
-        if ((nowMs - lastFlushMs) >= 100) {
+        if ((nowMs - lastFlushMs) >= 10000) {
             flushWriteBufferInternal();
             if (s_logFile) {
                 s_logFile.flush();

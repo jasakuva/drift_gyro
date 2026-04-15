@@ -16,6 +16,7 @@
 #include <math.h>
 
 #include "logging.h"
+#include "RollingPeak.h"
 
 //#include <WiFi.h>
 //#include <esp_wifi.h>
@@ -98,6 +99,8 @@ myMovingAverage<10> drift_value_avg;
 DriftDetector driftd(LOOP_PERIOD_S, 0.05f, 10.0f);
 
 ReturnDamping return_damp(0.25f, 0.1f, 0.0f, 0.0f);
+
+RollingPeak rp_corr(17);
 
 // ---- RC ranges ----
 const int16_t RC_MIN = 1000;
@@ -422,10 +425,14 @@ void controlTask(void* pvParameters) {
       corr = 0.0f;
     }
 
+    float correction_before_damping = corr;
+
     return_damping = return_damp.getDamping(corr, 0.0f); 
 
     //corr = corr_return_lp.update(corr);
     //correction_long_lp.update(corr);
+
+    corr = rp_corr.addGetPeak(corr);
 
     float correction_before_damping = corr;
 
@@ -472,8 +479,8 @@ void controlTask(void* pvParameters) {
       float p4 = steerIn;
       float p5 = out;
       float p6 = correction_before_damping;
-      float p7 = gain;
-      float p8 = return_damping;
+      float p7 = filtered_yaw_derivative;
+      float p8 = gain;
       LogSample s;
         s.t_us = micros();
 
