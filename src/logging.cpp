@@ -3,10 +3,10 @@
 #include "freertos/task.h"
 #include "freertos/queue.h"
 
-#define SD_CS_PIN D7
-#define SD_SCK_PIN D8
-#define SD_MISO_PIN D9
-#define SD_MOSI_PIN D10
+#define SD_CS_PIN 14
+#define SD_SCK_PIN 12
+#define SD_MISO_PIN 13
+#define SD_MOSI_PIN 11
 
 // -----------------------------
 // Static globals

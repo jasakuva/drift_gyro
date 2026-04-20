@@ -15,6 +15,7 @@
 #include "ReturnDamping.h"
 #include <math.h>
 
+#include "SCH16T.h"
 #include "logging.h"
 #include "RollingPeak.h"
 
@@ -30,17 +31,41 @@ AdaptiveGains ag;
 #include <Adafruit_MPU6050.h>
 #include <Adafruit_Sensor.h>
 
-#define SDA_PIN D4
-#define SCL_PIN D5
+#define SDA_PIN 4
+#define SCL_PIN 5
 
+#define FILTER_RATE         68.0f      // Hz, LPF0 Nominal Cut-off Frequency (-3dB).
+#define FILTER_ACC12        68.0f
+#define FILTER_ACC3         68.0f
+#define SENSITIVITY_RATE1   3200.0f     // LSB / dps, DYN1 Nominal Sensitivity for 20 bit data.
+#define SENSITIVITY_RATE2   3200.0f
+#define SENSITIVITY_ACC1    3200.0f     // LSB / m/s2, DYN1 Nominal Sensitivity for 20 bit data.
+#define SENSITIVITY_ACC2    3200.0f
+#define SENSITIVITY_ACC3    3200.0f     // LSB / m/s2, DYN1 Nominal Sensitivity for 20 bit data.
+#define DECIMATION_RATE     4          // DEC2, Output sample rate decimation. Nominal output rate of 5.9kHz.
+#define DECIMATION_ACC      4
 
+#define SPI_OBJECT          SPI         // Some platforms have additional SPI intefaces under different names (e.g. SPI1)
+#define CS_PIN              10
+#define RESET_PIN           -1          //leave as -1 if not used
+
+SCH16T_K01 imu(SPI_OBJECT, CS_PIN, RESET_PIN);
+
+char serial_num[15];
+int  init_status = SCH16T_ERR_OTHER;
+SCH16T_filter         Filter;
+SCH16T_sensitivity    Sensitivity;
+SCH16T_decimation     Decimation;
+
+SCH16T_raw_data raw;
+SCH16T_result result;
 
 
 
 // ---- Pins ----
-const uint8_t PIN_STEER_IN  = D0;
-const uint8_t PIN_GAIN_IN   = D1;
-const uint8_t PIN_SERVO_OUT = D3;
+const uint8_t PIN_STEER_IN  = 3;
+const uint8_t PIN_GAIN_IN   = 4;
+const uint8_t PIN_SERVO_OUT = 5;
 
 const unsigned long LOOP_PERIOD_US = 5000;   // 5 ms = 200 Hz
 const float LOOP_PERIOD_MS = LOOP_PERIOD_US / 1000.0f;
@@ -251,6 +276,7 @@ void setup() {
 
   loadSettings_2();
 
+  /*
   Wire.begin(SDA_PIN, SCL_PIN);
   Wire.setClock(400000);
   delay(50);
@@ -270,6 +296,38 @@ void setup() {
   mpu.setFilterBandwidth(MPU6050_BAND_94_HZ);
 
   calibrateGyroOffset();
+  */
+
+  SPI_OBJECT.begin();
+
+    delay(3000);
+
+    Filter.Rate12 = FILTER_RATE;
+    Filter.Acc12  = FILTER_ACC12;
+    Filter.Acc3   = FILTER_ACC3;
+
+    Sensitivity.Rate1 = SENSITIVITY_RATE1;
+    Sensitivity.Rate2 = SENSITIVITY_RATE2;
+    Sensitivity.Acc1  = SENSITIVITY_ACC1;
+    Sensitivity.Acc2  = SENSITIVITY_ACC2;
+    Sensitivity.Acc3  = SENSITIVITY_ACC3;
+
+    Decimation.Rate2 = DECIMATION_RATE;
+    Decimation.Acc2  = DECIMATION_ACC;
+
+    while (init_status != SCH16T_OK)
+    {
+        init_status = imu.begin(Filter, Sensitivity, Decimation, false);
+        if (init_status != SCH16T_OK) {
+            Serial.println("ERROR");
+            delay(3000);
+        }
+    }
+
+    // Read serial number from the sensor.
+    strcpy(serial_num, imu.getSnbr());
+    Serial.print("Serial Number: ");
+    Serial.println(serial_num);
 
   pinMode(PIN_STEER_IN, INPUT);
   pinMode(PIN_GAIN_IN, INPUT);
@@ -385,10 +443,15 @@ void controlTask(void* pvParameters) {
 
     // Read latest MPU6050 data
     sensors_event_t a, g, t;
-    mpu.getEvent(&a, &g, &t);
+    //mpu.getEvent(&a, &g, &t);
+
+    imu.getData(&raw);
+    imu.convertData(&raw, &result);
+
+    gyrodps = result.Rate1[SCH16T_AXIS_Z];
 
     // Z gyro in deg/s
-    gyrodps = (g.gyro.z * 57.2957795f) - gyroZOffset_dps;
+    //gyrodps = (g.gyro.z * 57.2957795f) - gyroZOffset_dps;
     Yaw = gyrodps;
 
     yawRateFilt = gyro_lp.update(gyrodps);                                  //   P  value
@@ -434,7 +497,7 @@ void controlTask(void* pvParameters) {
 
     corr = rp_corr.addGetPeak(corr);
 
-    float correction_before_damping = corr;
+    
 
     float delta = corr - lastGyroCorrection;
     
@@ -472,7 +535,7 @@ void controlTask(void* pvParameters) {
     steerServo.writeMicroseconds(out);
 
     logging_counter ++;
-    if(logging_counter >= 4) {
+    if(logging_counter >= 12) {
       float p1 = yawRateFilt;
       float p2 = gyrodps;
       float p3 = corr;
@@ -500,11 +563,11 @@ void controlTask(void* pvParameters) {
 
         loggingEnqueue(s);
 
-        //Serial.print("p1="); Serial.print(yawRateFilt);
-        //Serial.print("p3="); Serial.print(corr);
-        //Serial.print("p4="); Serial.print(steerIn);
-        //Serial.print("p8="); Serial.print(drift_multiplier);
-        //Serial.print("cp.gain="); Serial.println(cp.gain);
+        Serial.print("p1="); Serial.print(yawRateFilt);
+        Serial.print("p3="); Serial.print(corr);
+        Serial.print("p4="); Serial.print(steerIn);
+        Serial.print("p8="); Serial.print(drift_multiplier);
+        Serial.print("cp.gain="); Serial.println(cp.gain);
 
       logging_counter = 0;
     }
