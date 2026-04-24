@@ -14,11 +14,11 @@
 #endif
 
 #ifndef LOG_BUFFER_SAMPLES
-#define LOG_BUFFER_SAMPLES 8
+#define LOG_BUFFER_SAMPLES 11
 #endif
 
 // -----------------------------
-// Data structure: timestamp + 8 parameters
+// Data structure: timestamp + 1 parameters
 // -----------------------------
 struct LogSample {
     uint32_t t_us;
@@ -30,6 +30,9 @@ struct LogSample {
     float p6;
     float p7;
     float p8;
+    float p9;
+    float p10;
+    float p11;
 };
 
 // -----------------------------

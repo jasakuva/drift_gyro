@@ -113,7 +113,7 @@ lpfilter gyro_lp(20.0, LOOP_PERIOD_S);
 lpfilter derivative_lp(20.0, LOOP_PERIOD_S);
 lpfilter servoin_lp(20.0, LOOP_PERIOD_S);
 lpfilter servoout_lp(20.0, LOOP_PERIOD_S);
-lpfilter corr_return_lp(5.0, LOOP_PERIOD_S);
+lpfilter corr_lp(5.0, LOOP_PERIOD_S);
 lpfilter correction_long_lp(0.2, LOOP_PERIOD_S);
 
 derivative dYawRate(LOOP_PERIOD_MS);
@@ -228,11 +228,13 @@ static void loadSettings_2() {
   cp.max_d_corr       = prefs_2.getFloat("max_d_corr", 0.05);
   cp.dd_min_steer     = prefs_2.getFloat("dd_min_steer", 0.05);
   cp.dd_min_yaw       = prefs_2.getFloat("dd_min_yaw", 15);
+  cp.corr_lp_hz       = prefs_2.getFloat("corr_lp", 5.0);
 
   gyro_lp.setCutoff(cp.gyro_lp_hz);
   derivative_lp.setCutoff(cp.derivative_lp_hz);
   servoin_lp.setCutoff(cp.steer_in_lp_hz);
   servoout_lp.setCutoff(cp.steer_out_lp_hz);
+  corr_lp.setCutoff(cp.corr_lp_hz);
   mySteeringMap.setEpaValues(epa_low_us_2, epa_high_us_2, epa_center_us_2);
 
 
@@ -472,7 +474,7 @@ void controlTask(void* pvParameters) {
     // PID
     float curve_gain = 1;
     if(fabsf(yawRateFilt)<10) {
-      curve_gain = yawRateFilt * 0.1f;
+      curve_gain = fabsf(yawRateFilt) * 0.1f;
     }
 
     gyro_correction = curve_gain * drift_multiplier * cp.gain * gain * (cp.pid_p * yawRateFilt + cp.pid_d * filtered_yaw_derivative);
@@ -492,10 +494,10 @@ void controlTask(void* pvParameters) {
 
     return_damping = return_damp.getDamping(corr, 0.0f); 
 
-    //corr = corr_return_lp.update(corr);
+    corr = corr_lp.update(corr);
     //correction_long_lp.update(corr);
 
-    corr = rp_corr.addGetPeak(corr);
+    //corr = rp_corr.addGetPeak(corr);
 
     
 
@@ -535,15 +537,19 @@ void controlTask(void* pvParameters) {
     steerServo.writeMicroseconds(out);
 
     logging_counter ++;
-    if(logging_counter >= 12) {
+    if(logging_counter >= 4) {
       float p1 = yawRateFilt;
       float p2 = gyrodps;
       float p3 = corr;
       float p4 = steerIn;
       float p5 = out;
-      float p6 = correction_before_damping;
+      float p6 = drift_value;
       float p7 = filtered_yaw_derivative;
       float p8 = gain;
+      float p9 = result.Acc1[SCH16T_AXIS_X];
+      float p10 = result.Acc1[SCH16T_AXIS_Y];
+      float p11 = result.Acc1[SCH16T_AXIS_Z];
+
       LogSample s;
         s.t_us = micros();
 
@@ -556,19 +562,19 @@ void controlTask(void* pvParameters) {
         s.p6 = p6;
         s.p7 = p7;
         s.p8 = p8;
-
-    //    Serial.printf("%lu %.3f %.3f %.3f %.3f %.3f %.3f %.3f %.3f\n",
-    //(unsigned long)s.t_us,
-    //s.p1, s.p2, s.p3, s.p4, s.p5, s.p6, s.p7, s.p8);
+        s.p9 = p9;
+        s.p10 = p10;
+        s.p11 = p11;
 
         loggingEnqueue(s);
 
+        /*
         Serial.print("p1="); Serial.print(yawRateFilt);
         Serial.print("p3="); Serial.print(corr);
         Serial.print("p4="); Serial.print(steerIn);
         Serial.print("p8="); Serial.print(drift_multiplier);
         Serial.print("cp.gain="); Serial.println(cp.gain);
-
+        */
       logging_counter = 0;
     }
 

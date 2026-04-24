@@ -231,6 +231,7 @@ static void loadSettings() {
   cp.max_d_corr = prefs.getFloat("max_d_corr", 0.05);
   cp.dd_min_steer = prefs.getFloat("dd_min_steer", 0.05);
   cp.dd_min_yaw = prefs.getFloat("dd_min_yaw", 15);
+  cp.corr_lp_hz = prefs.getFloat("corr_lp_hz",5);
 
   prefs.end();
 
@@ -387,6 +388,7 @@ static void saveParameters() {
   prefs.putFloat("dd_min_steer", cp.dd_min_steer);
   prefs.putFloat("dd_min_yaw", cp.dd_min_yaw);
   prefs.putFloat("dd_multiplier", cp.dd_multiplier);
+  prefs.putFloat("corr_lp_hz", cp.corr_lp_hz);
 
   prefs.end();
 
@@ -619,6 +621,8 @@ static void handleSettings() {
   s += "<label for='dd_min_steer'>drift_detect_min_steer</label><input class='val8' id='dd_min_steer' name='dd_min_steer' type='number' step='0.005' value='" + String(cp.dd_min_steer) + "'>";
   s += "<label for='dd_min_yaw'>drift_detect_min_yaw</label><input class='val8' id='dd_min_yaw' name='dd_min_yaw' type='number' step='0.5' value='" + String(cp.dd_min_yaw) + "'>";
   s += "<label for='dd_multiplier'>drift_detect_multipl.</label><input class='val8' id='dd_multiplier' name='dd_multiplier' type='number' step='0.1' value='" + String(cp.dd_multiplier) + "'>";
+  s += "<label for='corr_lp_hz'>corr_lp_hz</label><input class='val8' id='corr_lp_hz' name='corr_lp_hz' type='number' step='0.1' value='" + String(cp.corr_lp_hz) + "'>";
+
 
   s += "</div>";
 
@@ -649,6 +653,7 @@ static void handleSettingsSet() {
   cp.dd_min_steer = getArgFloat("dd_min_steer", cp.dd_min_steer);
   cp.dd_min_yaw = getArgFloat("dd_min_yaw", cp.dd_min_yaw);
   cp.dd_multiplier = getArgFloat("dd_multiplier", cp.dd_multiplier);
+  cp.corr_lp_hz = getArgFloat("corr_lp_hz", cp.corr_lp_hz);
   //Serial.print("cp.gyro_avg="); Serial.print(cp.gyro_avg);
 
   saveParameters();
