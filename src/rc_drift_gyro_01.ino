@@ -27,12 +27,12 @@
 WobbleDetectorZC wob;
 AdaptiveGains ag;
 
-#include <Wire.h>
-#include <Adafruit_MPU6050.h>
-#include <Adafruit_Sensor.h>
+//#include <Wire.h>
+//#include <Adafruit_MPU6050.h>
+//#include <Adafruit_Sensor.h>
 
-#define SDA_PIN 4
-#define SCL_PIN 5
+//#define SDA_PIN 4
+//#define SCL_PIN 5
 
 #define FILTER_RATE         68.0f      // Hz, LPF0 Nominal Cut-off Frequency (-3dB).
 #define FILTER_ACC12        68.0f
@@ -60,6 +60,8 @@ SCH16T_decimation     Decimation;
 SCH16T_raw_data raw;
 SCH16T_result result;
 
+float acc_lateral_setpoint;
+
 
 
 // ---- Pins ----
@@ -73,6 +75,7 @@ const float LOOP_PERIOD_S  = LOOP_PERIOD_MS / 1000.0f;
 unsigned long nextLoopTime;
 uint32_t nextLoopTimeUs = 0;
 float dt_s = LOOP_PERIOD_US * 1e-6f;
+int16_t out;
 
 portMUX_TYPE s_mux = portMUX_INITIALIZER_UNLOCKED;
 
@@ -82,7 +85,7 @@ TaskHandle_t controlTaskHandle = nullptr;
 TaskHandle_t wifiTaskHandle = nullptr;
 hw_timer_t* controlTimer = nullptr;
 
-#define BUFFER_SIZE 30
+#define BUFFER_SIZE 60
 
 ControlParams cp;
 
@@ -103,7 +106,7 @@ float lastGyroCorrection = 0.0f;
 
 Preferences prefs_2;
 
-Adafruit_MPU6050 mpu;
+//Adafruit_MPU6050 mpu;
 
 //WebServer server2(80);
 //WebSocketsServer ws2(81);   // WebSocket on port 81
@@ -115,6 +118,7 @@ lpfilter servoin_lp(20.0, LOOP_PERIOD_S);
 lpfilter servoout_lp(20.0, LOOP_PERIOD_S);
 lpfilter corr_lp(5.0, LOOP_PERIOD_S);
 lpfilter correction_long_lp(0.2, LOOP_PERIOD_S);
+lpfilter acc_lat_lp(20, LOOP_PERIOD_S);
 
 derivative dYawRate(LOOP_PERIOD_MS);
 derivative dSteering(LOOP_PERIOD_MS);
@@ -203,6 +207,12 @@ static inline int16_t clamp16(int16_t v, int16_t lo, int16_t hi) {
   return v;
 }
 
+static inline float clampf(float v, float lo, float hi) {
+  if (v < lo) return lo;
+  if (v > hi) return hi;
+  return v;
+}
+
 static inline float lpf(float prev, float x, float alpha) {
   return prev + alpha * (x - prev);
 }
@@ -229,12 +239,14 @@ static void loadSettings_2() {
   cp.dd_min_steer     = prefs_2.getFloat("dd_min_steer", 0.05);
   cp.dd_min_yaw       = prefs_2.getFloat("dd_min_yaw", 15);
   cp.corr_lp_hz       = prefs_2.getFloat("corr_lp", 5.0);
+  cp.acc_lat_multip     = prefs_2.getFloat("acc_lat_multip", 5.0);
 
   gyro_lp.setCutoff(cp.gyro_lp_hz);
   derivative_lp.setCutoff(cp.derivative_lp_hz);
   servoin_lp.setCutoff(cp.steer_in_lp_hz);
   servoout_lp.setCutoff(cp.steer_out_lp_hz);
   corr_lp.setCutoff(cp.corr_lp_hz);
+  acc_lat_lp.setCutoff(20);
   mySteeringMap.setEpaValues(epa_low_us_2, epa_high_us_2, epa_center_us_2);
 
 
@@ -248,16 +260,12 @@ static void calibrateGyroOffset() {
   const int samples = 500;
   float sum = 0.0f;
 
-  sensors_event_t a, g, t;
+  
 
   Serial.println("Calibrating MPU6050 gyro offset... keep car still");
   delay(500);
 
-  for (int i = 0; i < samples; i++) {
-    mpu.getEvent(&a, &g, &t);
-    sum += g.gyro.z * 57.2957795f;  // rad/s -> deg/s
-    delay(2);
-  }
+  
 
   gyroZOffset_dps = sum / samples;
   Serial.print("gyroZOffset_dps=");
@@ -271,6 +279,38 @@ void reloadSettings() {
   servoout_lp.setCutoff(cp.steer_out_lp_hz);
   wob.setAmplitude(cp.wobble_det_a);
   driftd.init(LOOP_PERIOD_S, cp.dd_min_steer, cp.dd_min_yaw);
+  corr_lp.setCutoff(cp.corr_lp_hz);
+
+}
+
+void calibrateImu (){
+  const int N = 10;
+  float readings[N];
+
+  for (int i = 0; i < N; i++) {
+    imu.getData(&raw);
+    imu.convertData(&raw, &result);
+    readings[i] = result.Acc1[SCH16T_AXIS_X];  // Replace with your actual IMU read function
+    delay(100);
+  }
+
+  // 2. Calculate average
+  float sum = 0;
+  for (int i = 0; i < N; i++) {
+    sum += readings[i];
+  }
+  float mean = sum / N;
+
+  acc_lateral_setpoint = mean;
+
+  // 3. Calculate standard deviation
+  float variance = 0;
+  for (int i = 0; i < N; i++) {
+    variance += pow(readings[i] - mean, 2);
+  }
+  variance /= N;
+
+  float stdev = sqrt(variance);
 }
 
 void setup() {
@@ -278,31 +318,9 @@ void setup() {
 
   loadSettings_2();
 
-  /*
-  Wire.begin(SDA_PIN, SCL_PIN);
-  Wire.setClock(400000);
-  delay(50);
-
-  if (!mpu.begin(0x68, &Wire)) {
-    Serial.println("MPU6050 not found");
-    while (1) {
-      delay(10);
-    }
-  }
-
-  Serial.println("MPU6050 found");
-
-  // Good starting point for RC drift gyro
-  mpu.setAccelerometerRange(MPU6050_RANGE_8_G);
-  mpu.setGyroRange(MPU6050_RANGE_1000_DEG);
-  mpu.setFilterBandwidth(MPU6050_BAND_94_HZ);
-
-  calibrateGyroOffset();
-  */
-
   SPI_OBJECT.begin();
 
-    delay(3000);
+    delay(1000);
 
     Filter.Rate12 = FILTER_RATE;
     Filter.Acc12  = FILTER_ACC12;
@@ -335,6 +353,8 @@ void setup() {
   pinMode(PIN_GAIN_IN, INPUT);
   delay(500);
 
+  calibrateImu();
+
   steerServo.attach(PIN_SERVO_OUT);
   steerServo.setTimerWidth(14);
 
@@ -343,9 +363,9 @@ void setup() {
 
   delay(200);
 
-  if (s_pw < 1300 || s_pw > 1700) {
-    makeSettings();
-  }
+  //if (s_pw < 1300 || s_pw > 1700) {
+  //  makeSettings();
+  //}
 
   loadSettings_2();
 
@@ -381,10 +401,6 @@ void setup() {
 
 }
 
-//void handleRoot() {
-//  server2.send(200, "text/plain", "ESP32 drift gyro running");
-//}
-
 void wifiTask(void* pvParameters) {
 
  
@@ -401,6 +417,9 @@ void wifiTask(void* pvParameters) {
 
 void controlTask(void* pvParameters) {
   uint32_t lastTickUs = micros();
+  float acc_lat;
+  float acc_lat_filt;
+  float acc_lat_corr;
 
   for (;;) {
     // Wait until timer ISR wakes this task
@@ -421,14 +440,6 @@ void controlTask(void* pvParameters) {
     cp_local = cp;
     portEXIT_CRITICAL(&cp_mux);
     
-    uint32_t now = micros();
-
-    // Wait until scheduled time
-    //if ((int32_t)(now - nextLoopTimeUs) < 0) {
-    //  return;
-    //}
-
-    // Measure actual dt from schedule, not from random loop speed
     
     // Read RC pulses atomically
     uint16_t steerIn, gainIn;
@@ -443,14 +454,12 @@ void controlTask(void* pvParameters) {
     steerIn = servoin_lp.update(steerIn);
     normSteering = mySteeringMap.getNormalized(steerIn);
 
-    // Read latest MPU6050 data
-    sensors_event_t a, g, t;
-    //mpu.getEvent(&a, &g, &t);
-
     imu.getData(&raw);
     imu.convertData(&raw, &result);
 
     gyrodps = result.Rate1[SCH16T_AXIS_Z];
+    acc_lat = result.Acc1[SCH16T_AXIS_X] - acc_lateral_setpoint;
+    acc_lat_filt = acc_lat_lp.update(acc_lat);
 
     // Z gyro in deg/s
     //gyrodps = (g.gyro.z * 57.2957795f) - gyroZOffset_dps;
@@ -470,25 +479,32 @@ void controlTask(void* pvParameters) {
     //if((yawRateFilt > 0 && filtered_yaw_derivative < 0) || (yawRateFilt < 0 && filtered_yaw_derivative > 0)) {
     //  return_damping = drift_value;
     //}
-
-    // PID
+    
     float curve_gain = 1;
-    if(fabsf(yawRateFilt)<10) {
-      curve_gain = fabsf(yawRateFilt) * 0.1f;
+    if(fabsf(out)<100) {
+      curve_gain = fabsf(out) * 0.01f;
     }
 
+    // PID
     gyro_correction = curve_gain * drift_multiplier * cp.gain * gain * (cp.pid_p * yawRateFilt + cp.pid_d * filtered_yaw_derivative);
 
     corr = gyro_correction;
 
+    // steering prio can reduce gyro correction
     corr = gyro_correction /
            (1.0f + (abs(dSteering.update(normSteering)) / 2.0f) * cp.steering_prio);
 
+    // gyro correction exponent
     if (corr != 0.0f) {
       corr = (corr > 0.0f ? 1.0f : -1.0f) * powf(fabs(corr), cp.correction_exp);
     } else {
       corr = 0.0f;
     }
+
+    acc_lat_corr = acc_lat_filt * cp.acc_lat_multip;
+    acc_lat_corr = clampf(acc_lat_corr, -50.0f, 50.0f);
+
+    corr = corr + acc_lat_corr;
 
     float correction_before_damping = corr;
 
@@ -499,11 +515,7 @@ void controlTask(void* pvParameters) {
 
     //corr = rp_corr.addGetPeak(corr);
 
-    
-
     float delta = corr - lastGyroCorrection;
-    
-    
 
     // return damping, percentage method
     //delta = delta * (1.0f - 1.0f*sqrt(return_damping));
@@ -522,15 +534,16 @@ void controlTask(void* pvParameters) {
     }
     */
     corr = lastGyroCorrection + delta;
-    // global damper
-    //if (fabs(delta) > cp.max_d_corr) {
-    //  corr = lastGyroCorrection + (delta > 0 ? cp.max_d_corr : -cp.max_d_corr);
-    //}
+    
+    //global damper
+    if (fabs(delta) > cp.max_d_corr) {
+      corr = lastGyroCorrection + (delta > 0 ? cp.max_d_corr : -cp.max_d_corr);
+    }
 
     //lastGyroCorrection = correction_before_damping;
     lastGyroCorrection = corr;
 
-    int16_t out = steerIn + (int16_t)corr;
+    out = steerIn + (int16_t)corr;
     out = clamp16(out, epa_low_us_2, epa_high_us_2);
 
     out = servoout_lp.update(out);
